@@ -1,0 +1,82 @@
+# ============================================================
+# 办公文档一键处理助手 —— .gitignore
+# 设计原则：只让"重建产物"进库；任何"跑过代码就有"的东西都剔除。
+# ============================================================
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---------- 本机虚拟环境（每个开发机一份，进了库别人拉不动）----------
+.venv/
+.venv-*/
+.venv312/
+.venv-verify/
+.env
+.venv.bak/
+
+# ---------- PyInstaller / 构建中间产物 ----------
+build/OfficeDocAssistant/
+build/_MEI*/
+build/__pycache__/
+build/office_doc_assistant/
+build/office_doc_assistant/OfficeDocAssistant.exe
+# 唯一例外：spec 现场生成、保留也无害的版本资源（CI 会重新生成）
+# 版本资源是构建产物，但 spec 每次打包都会写回，保留无副作用。
+# 如果要彻底干净，可以加 !build/version_info.txt 后单独忽略：
+!build/version_info.txt
+
+# ---------- 打包产物（不库，CI 自己重出）----------
+dist/
+*.dmg
+*.exe
+*.whl
+# 探针误生成的根目录版本资源（spec 实际写在 build/version_info.txt）
+/version_info.txt
+
+# ---------- 测试沙盒产物（跑测试时生成）----------
+_printtest*/
+_printtest2/
+_printtest4/
+_selftest/
+_testout/
+test_output/
+tests/.pytest_cache/
+tests/__pycache__/
+__pycache__/
+
+# ---------- IDE / 编辑器 ----------
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------- 用户本地配置 / 日志 / 数据 ----------
+# 程序运行时写在 %APPDATA%/OfficeDocAssistant/，不进库；
+# 但要防止有人不小心把整个用户目录指到仓库根。
+*.log
+logs/
+*.local.json
+
+# ---------- 临时 / 上传缓存 ----------
+*.tmp
+*.bak
+*~
+.cache/
+.pytest_cache/
+.tox/
+
+# ---------- 敏感信息（万一把 demo 凭据粘进来）----------
+*.pem
+*.key
+.env.local
+secrets.*

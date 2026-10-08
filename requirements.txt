@@ -1,0 +1,37 @@
+# 办公文档一键处理助手 —— 运行依赖
+# 目标 Python：3.10 / 3.11（Windows 8.1+ 与 macOS 12+ 均可）
+
+# ---------- PDF 核心 ----------
+pypdf>=4.0,<7            # PDF 读写/合并/拆分/旋转/加密。6.x 的 Page API 有变化，已做兼容
+reportlab>=4.0           # 生成页码/水印/页眉页脚覆盖层（内建中日韩字体，跨平台无外部字体依赖）
+Pillow>=10.0             # 图片处理、多图合成 PDF
+
+# ---------- PDF 转图片（需要外部 Poppler）----------
+pdf2image>=1.17
+
+# ---------- PDF 高保真渲染（打印功能使用，单 pypi 包无需外部二进制）----------
+PyMuPDF>=1.24            # 打印链路：PDF → 位图，避免 pdf2image 对 Poppler 的硬依赖
+
+# ---------- Windows 打印支持（仅 Windows）----------
+# 非 Windows 平台可忽略；本模块在 Linux/macOS 上注册时自动跳过
+pywin32>=306 ; sys_platform == 'win32'
+
+# ---------- PDF 加密 AES 支持 ----------
+# pypdf 的 AES-128/256 需要 cryptography；未安装时程序自动降级为 RC4-128
+cryptography>=41
+
+# ---------- Office 文档读写 ----------
+openpyxl>=3.1            # Excel 合并/拆分
+python-docx>=1.1         # Word 文本抽取（用于文档对比）
+python-pptx>=1.0         # PPT（预留：读取页数/属性）
+
+# ---------- 压缩 ----------
+py7zr>=0.21              # 7z 压缩解压（ZIP 用标准库 zipfile）
+
+# ---------- 可选：拖拽支持 ----------
+# Tkinter 自身不支持从资源管理器拖入文件，需要 tkdnd 扩展。
+# 未安装时程序正常运行，拖拽区自动退化为"点击选择文件"。
+tkinterdnd2>=0.3
+
+# ---------- 打包（仅开发环境需要）----------
+# pyinstaller>=6.0

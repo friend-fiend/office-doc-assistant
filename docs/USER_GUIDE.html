@@ -1,0 +1,905 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>办公文档一键处理助手 · 功能介绍</title>
+<style>
+  :root {
+    --bg: #fafbfc;
+    --surface: #ffffff;
+    --border: #e1e5eb;
+    --border-strong: #cbd2dc;
+    --text: #1a1f2e;
+    --text-soft: #5a6373;
+    --text-muted: #8b94a3;
+    --primary: #2563eb;
+    --primary-soft: #dbeafe;
+    --success: #16a34a;
+    --success-soft: #dcfce7;
+    --warning: #d97706;
+    --warning-soft: #fef3c7;
+    --accent: #7c3aed;
+    --accent-soft: #ede9fe;
+    --shadow: 0 1px 2px rgba(15, 23, 42, 0.05), 0 4px 12px rgba(15, 23, 42, 0.04);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                 "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .container { max-width: 1080px; margin: 0 auto; padding: 32px 24px 80px; }
+
+  /* ===== 顶部 Hero ===== */
+  .hero {
+    background: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);
+    color: white;
+    border-radius: 16px;
+    padding: 48px 40px;
+    margin-bottom: 32px;
+    box-shadow: var(--shadow);
+  }
+  .hero h1 { font-size: 32px; font-weight: 700; margin-bottom: 12px; }
+  .hero .subtitle { font-size: 16px; opacity: 0.92; max-width: 720px; }
+  .hero .badges { margin-top: 20px; display: flex; flex-wrap: wrap; gap: 8px; }
+  .badge {
+    background: rgba(255, 255, 255, 0.18);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    color: white;
+    padding: 4px 12px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  /* ===== 导航 ===== */
+  nav.toc {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 24px;
+    margin-bottom: 32px;
+    box-shadow: var(--shadow);
+  }
+  nav.toc h2 { font-size: 14px; text-transform: uppercase; color: var(--text-muted);
+               letter-spacing: 0.08em; margin-bottom: 12px; font-weight: 600; }
+  nav.toc ol { columns: 2; column-gap: 24px; padding-left: 20px; }
+  nav.toc li { margin-bottom: 4px; break-inside: avoid; }
+  nav.toc a { color: var(--text-soft); text-decoration: none; font-size: 14px; }
+  nav.toc a:hover { color: var(--primary); }
+
+  /* ===== 章节 ===== */
+  section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px 32px;
+    margin-bottom: 24px;
+    box-shadow: var(--shadow);
+  }
+  section h2 {
+    font-size: 22px;
+    font-weight: 700;
+    margin-bottom: 6px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  section h2 .num {
+    display: inline-block;
+    width: 28px; height: 28px;
+    background: var(--primary-soft);
+    color: var(--primary);
+    border-radius: 8px;
+    text-align: center;
+    line-height: 28px;
+    font-size: 14px;
+    font-weight: 700;
+    margin-right: 10px;
+    vertical-align: middle;
+  }
+  section h3 {
+    font-size: 16px;
+    font-weight: 600;
+    margin-top: 20px;
+    margin-bottom: 8px;
+    color: var(--text);
+  }
+  section p { color: var(--text-soft); margin-bottom: 12px; }
+  section ul { color: var(--text-soft); padding-left: 20px; margin-bottom: 12px; }
+  section ul li { margin-bottom: 4px; }
+
+  /* ===== 概览表 ===== */
+  table.overview {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 14px;
+  }
+  table.overview th {
+    text-align: left;
+    background: #f5f7fa;
+    color: var(--text-soft);
+    font-weight: 600;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border-strong);
+  }
+  table.overview td {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+  }
+  table.overview tr:hover td { background: #f9fafc; }
+  table.overview .cat {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .cat-pdf      { background: var(--primary-soft); color: var(--primary); }
+  .cat-conv     { background: var(--accent-soft);  color: var(--accent);  }
+  .cat-comp     { background: var(--success-soft); color: var(--success); }
+  .cat-adv      { background: var(--warning-soft); color: var(--warning); }
+  .cat-batch    { background: #f1f5f9;             color: #475569;       }
+
+  /* ===== 功能卡片 ===== */
+  .op-card {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 18px;
+    margin: 14px 0;
+    background: #fcfdfe;
+    transition: border-color 0.15s;
+  }
+  .op-card:hover { border-color: var(--primary); }
+  .op-card .op-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+  .op-card .op-title { font-weight: 600; font-size: 15px; color: var(--text); }
+  .op-card .op-key {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    color: var(--text-muted);
+    background: #f5f7fa;
+    padding: 2px 8px;
+    border-radius: 4px;
+  }
+  .op-card .op-desc { color: var(--text-soft); font-size: 14px; margin-bottom: 8px; }
+  .op-card .params {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 4px 12px;
+    font-size: 13px;
+    margin-top: 6px;
+  }
+  .op-card .params dt { color: var(--text-muted); font-weight: 500; }
+  .op-card .params dd { color: var(--text-soft); }
+
+  /* ===== 高亮块 ===== */
+  .highlight {
+    border-left: 4px solid var(--primary);
+    background: var(--primary-soft);
+    padding: 14px 18px;
+    border-radius: 0 8px 8px 0;
+    margin: 16px 0;
+    font-size: 14px;
+    color: #1e3a8a;
+  }
+  .highlight.success { border-left-color: var(--success); background: var(--success-soft); color: #166534; }
+  .highlight.warning { border-left-color: var(--warning); background: var(--warning-soft); color: #92400e; }
+
+  /* ===== 表格 ===== */
+  table.specs {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0;
+    font-size: 14px;
+  }
+  table.specs th, table.specs td {
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  table.specs th {
+    background: #f5f7fa;
+    color: var(--text-soft);
+    font-weight: 600;
+  }
+
+  /* ===== 限量规格块 ===== */
+  .limit-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 12px;
+    margin: 16px 0;
+  }
+  .limit-card {
+    background: #f5f7fa;
+    border-radius: 8px;
+    padding: 14px;
+  }
+  .limit-card .label { font-size: 12px; color: var(--text-muted); text-transform: uppercase;
+                       letter-spacing: 0.06em; margin-bottom: 4px; }
+  .limit-card .value { font-size: 18px; font-weight: 600; color: var(--text); }
+  .limit-card .note  { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+
+  /* ===== 页脚 ===== */
+  footer {
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 13px;
+    margin-top: 48px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+  }
+
+  /* ===== 打印 ===== */
+  @media print {
+    body { background: white; }
+    .hero { background: #2563eb !important; -webkit-print-color-adjust: exact; }
+    section, nav.toc { box-shadow: none; break-inside: avoid; }
+    section h2 { break-after: avoid; }
+    .op-card { break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+<!-- ========== Hero ========== -->
+<div class="hero">
+  <h1>办公文档一键处理助手</h1>
+  <div class="subtitle">
+    一个桌面端、零广告、纯本地处理的工具集。覆盖 PDF 合并/拆分/压缩/水印/加密、Excel 拆分/合并、
+    Office 转 PDF、批量打印等 24 个常用场景。所有文件不出本地，所有依赖都是宽松许可，
+    Windows / macOS 都能用。
+  </div>
+  <div class="badges">
+    <span class="badge">Windows</span>
+    <span class="badge">macOS</span>
+    <span class="badge">完全本地</span>
+    <span class="badge">无广告</span>
+    <span class="badge">MIT/BSD/Apache</span>
+    <span class="badge">开源依赖</span>
+  </div>
+</div>
+
+<!-- ========== TOC ========== -->
+<nav class="toc">
+  <h2>目录</h2>
+  <ol>
+    <li><a href="#total">全功能总览</a></li>
+    <li><a href="#pdf">PDF 处理（11 项）</a></li>
+    <li><a href="#excel">Excel 处理（2 项）</a></li>
+    <li><a href="#convert">格式转换（3 项）</a></li>
+    <li><a href="#compress">压缩加密（4 项）</a></li>
+    <li><a href="#advanced">高级工具（3 项）</a></li>
+    <li><a href="#batch">批量工具（3 项）</a></li>
+    <li><a href="#print-detail">批量打印详解</a></li>
+    <li><a href="#limit">性能与限制</a></li>
+    <li><a href="#dist">打包与分发</a></li>
+    <li><a href="#faq">常见问题</a></li>
+  </ol>
+</nav>
+
+<!-- ========== 1 总览 ========== -->
+<section id="total">
+  <h2><span class="num">1</span>全功能总览（24 项）</h2>
+  <p>按使用频次和功能类别分组，点击功能名跳转查看详情。</p>
+  <table class="overview">
+    <thead>
+      <tr><th>功能</th><th>类别</th><th>一句话描述</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><a href="#pdf-merge">PDF 合并</a></td><td><span class="cat cat-pdf">PDF</span></td><td>多文件合并为一个，可调顺序</td></tr>
+      <tr><td><a href="#pdf-split">PDF 拆分</a></td><td><span class="cat cat-pdf">PDF</span></td><td>按页数均匀分 / 按页码范围分</td></tr>
+      <tr><td><a href="#pdf-extract">提取指定页</a></td><td><span class="cat cat-pdf">PDF</span></td><td>从原文件中抽出部分页</td></tr>
+      <tr><td><a href="#pdf-delete-pages">删除指定页</a></td><td><span class="cat cat-pdf">PDF</span></td><td>按页码列表删除页</td></tr>
+      <tr><td><a href="#pdf-rotate">PDF 旋转</a></td><td><span class="cat cat-pdf">PDF</span></td><td>每页旋转 90°/180°/270°</td></tr>
+      <tr><td><a href="#pdf-page-number">PDF 加页码</a></td><td><span class="cat cat-pdf">PDF</span></td><td>在页面指定位置加页码</td></tr>
+      <tr><td><a href="#pdf-header-footer">PDF 页眉页脚</a></td><td><span class="cat cat-pdf">PDF</span></td><td>统一加页眉页脚文字</td></tr>
+      <tr><td><a href="#pdf-compress">PDF 压缩</a></td><td><span class="cat cat-comp">压缩</span></td><td>降低图片分辨率，体积变小</td></tr>
+      <tr><td><a href="#pdf-encrypt">PDF 加密</a></td><td><span class="cat cat-comp">安全</span></td><td>设置打开/修改密码</td></tr>
+      <tr><td><a href="#pdf-decrypt">PDF 解密</a></td><td><span class="cat cat-comp">安全</span></td><td>移除已有密码</td></tr>
+      <tr><td><a href="#pdf-watermark">PDF 加水印</a></td><td><span class="cat cat-adv">高级</span></td><td>文字/图片水印，可调透明度和位置</td></tr>
+      <tr><td><a href="#pdf-to-image">PDF 转图片</a></td><td><span class="cat cat-conv">转换</span></td><td>每页导出 PNG/JPG</td></tr>
+      <tr><td><a href="#image-to-pdf">图片转 PDF</a></td><td><span class="cat cat-conv">转换</span></td><td>多图合成 PDF</td></tr>
+      <tr><td><a href="#office-to-pdf">Office 转 PDF</a></td><td><span class="cat cat-conv">转换</span></td><td>Word/Excel/PPT → PDF</td></tr>
+      <tr><td><a href="#pdf-export">PDF 导出 PDF</a></td><td><span class="cat cat-conv">转换</span></td><td>改纸张/拼版后输出新 PDF（无对话框）</td></tr>
+      <tr><td><a href="#pdf-print">PDF 批量打印</a></td><td><span class="cat cat-pdf">PDF</span></td><td>走 Windows 队列，每份独立配置</td></tr>
+      <tr><td><a href="#excel-split">Excel 拆分</a></td><td><span class="cat cat-batch">Excel</span></td><td>按行/按表拆分，保留真实公式 + 格式</td></tr>
+      <tr><td><a href="#excel-merge">Excel 合并</a></td><td><span class="cat cat-batch">Excel</span></td><td>多工作簿合成一个</td></tr>
+      <tr><td><a href="#doc-compare">文档对比</a></td><td><span class="cat cat-adv">高级</span></td><td>两个文档逐字对比，标红差异</td></tr>
+      <tr><td><a href="#batch-rename">批量重命名</a></td><td><span class="cat cat-batch">批量</span></td><td>按规则批量改名</td></tr>
+      <tr><td><a href="#archive-compress">批量压缩</a></td><td><span class="cat cat-comp">批量</span></td><td>多文件打包成 ZIP</td></tr>
+      <tr><td><a href="#archive-extract">批量解压</a></td><td><span class="cat cat-comp">批量</span></td><td>批量解压 ZIP/RAR/7z</td></tr>
+      <tr><td colspan="3" style="text-align:center; color:var(--text-muted); font-size:13px;">
+        + 通用：环境自检、加密文件夹（输出文件夹，含源文件回退）、进度条、错误日志、随时取消</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ========== 2 PDF 处理 ========== -->
+<section id="pdf">
+  <h2><span class="num">2</span>PDF 处理（11 项）</h2>
+  <p>PDF 是这个工具的核心。所有 PDF 操作都基于纯 Python 库 <code>pypdf</code> + <code>PyMuPDF</code>，
+    不依赖 Adobe、不依赖浏览器内核。</p>
+
+  <div class="op-card" id="pdf-merge">
+    <div class="op-head">
+      <span class="op-title">PDF 合并</span>
+      <span class="op-key">pdf_merge</span>
+    </div>
+    <div class="op-desc">把多份 PDF 按用户指定的顺序合并成一份。可以插入空白页、删除特定页。</div>
+    <dl class="params">
+      <dt>输入</dt><dd>多份 PDF（≥ 2）</dd>
+      <dt>输出</dt><dd>单份 PDF</dd>
+      <dt>关键参数</dt><dd>文件顺序、插入空白页位置</dd>
+      <dt>适用场景</dt><dd>合并多章节报告、合订扫描件</dd>
+    </dl>
+  </div>
+
+  <div class="op-card" id="pdf-split">
+    <div class="op-head">
+      <span class="op-title">PDF 拆分</span>
+      <span class="op-key">pdf_split</span>
+    </div>
+    <div class="op-desc">两种模式：<b>按页数均匀拆</b>（每 N 页一个文件）和<b>按页码范围拆</b>（如 1-5,8,11-13 一份）。
+      拆出来的每个文件自动加上序号后缀。</div>
+    <dl class="params">
+      <dt>输入</dt><dd>单份 PDF</dd>
+      <dt>输出</dt><dd>多份 PDF</dd>
+      <dt>关键参数</dt><dd>每段页数 / 页码范围列表 / 起始编号</dd>
+      <dt>适用场景</dt><dd>长文档分发给不同部门、按章节归档</dd>
+    </dl>
+  </div>
+
+  <div class="op-card" id="pdf-extract">
+    <div class="op-head">
+      <span class="op-title">提取指定页</span>
+      <span class="op-key">pdf_extract</span>
+    </div>
+    <div class="op-desc">从一份 PDF 中按页码列表抽出部分页，合成一份新 PDF。</div>
+    <dl class="params">
+      <dt>关键参数</dt><dd>页码列表（如 1,3,5-8）</dd>
+      <dt>适用场景</dt><dd>从报告抽出某一章、从合同抽出附件页</dd>
+    </dl>
+  </div>
+
+  <div class="op-card" id="pdf-delete-pages">
+    <div class="op-head">
+      <span class="op-title">删除指定页</span>
+      <span class="op-key">pdf_delete_pages</span>
+    </div>
+    <div class="op-desc">与"提取"相反 —— 按页码列表从原文件中删除。</div>
+    <dl class="params">
+      <dt>适用场景</dt><dd>删除封面/空白页、移除机密页</dd>
+    </dl>
+  </div>
+
+  <div class="op-card" id="pdf-rotate">
+    <div class="op-head">
+      <span class="op-title">PDF 旋转</span>
+      <span class="op-key">pdf_rotate</span>
+    </div>
+    <div class="op-desc">把每页旋转 90°/180°/270°，常用于纠正扫描方向错误的文档。</div>
+    <dl class="params">
+      <dt>关键参数</dt><dd>旋转角度、是否所有页统一 / 仅奇数页 / 仅偶数页</dd>
+    </dl>
+  </div>
+
+  <div class="op-card" id="pdf-page-number">
+    <div class="op-head">
+      <span class="op-title">PDF 加页码</span>
+      <span class="op-key">pdf_page_number</span>
+    </div>
+    <div class="op-desc">在指定位置（左下/右下/居中等）加上页码，可设置字体大小和起始编号。</div>
+    <dl class="params">
+      <dt>关键参数</dt><dd>位置、字号、起始号、是否首页包含</dd>
+    </dl>
+  </div>
+
+  <div class="op-card" id="pdf-header-footer">
+    <div class="op-head">
+      <span class="op-title">PDF 页眉页脚</span>
+      <span class="op-key">pdf_header_footer</span>
+    </div>
+    <div class="op-desc">统一在每页加页眉/页脚文字（如"机密"、"公司名 · 日期 · 页码"）。</div>
+    <dl class="params">
+      <dt>关键参数</dt><dd>文字内容、位置（左/中/右）、字号、颜色</dd>
+    </dl>
+  </div>
+
+  <div class="op-card" id="pdf-watermark">
+    <div class="op-head">
+      <span class="op-title">PDF 加水印</span>
+      <span class="op-key">pdf_watermark</span>
+    </div>
+    <div class="op-desc">支持文字水印和图片水印，可调透明度（10-100%）、旋转角度（0/45/-45）、
+      缩放比例、放置位置（居中/平铺/角落）。</div>
+    <dl class="params">
+      <dt>关键参数</dt><dd>水印类型、文字内容 / 图片路径、透明度、旋转、缩放、位置</dd>
+      <dt>适用场景</dt><dd>加"草稿"、"机密"、"内部资料"标识</dd>
+    </dl>
+  </div>
+
+  <div class="op-card" id="pdf-print">
+    <div class="op-head">
+      <span class="op-title">PDF 批量打印</span>
+      <span class="op-key">pdf_print</span>
+    </div>
+    <div class="op-desc">批量把 PDF 送到 Windows 打印机。每份文件可以独立配置纸张/方向/份数/双面/颜色。
+      只显示真实物理打印机（虚拟 PDF/XPS/传真设备全部隐藏），<b>不会误弹"另存为"对话框</b>，
+      也<b>不会修改你的系统打印机默认设置</b>。
+      首次使用建议先勾「仅演练不打印」核对版式。
+      详见 <a href="#print-detail">批量打印详解</a>。</div>
+    <dl class="params">
+      <dt>关键参数</dt><dd>目标打印机、仅演练不打印、每文件纸张/方向/份数/双面/颜色、页码范围、缩放、拼版</dd>
+      <dt>安全设计</dt><dd>真实打印必须在界面上确认；执行前会列出打印机名、合计份数与预计张数</dd>
+    </dl>
+  </div>
+
+  <div class="op-card" id="pdf-export">
+    <div class="op-head">
+      <span class="op-title">PDF 导出 PDF（无对话框）</span>
+      <span class="op-key">pdf_export</span>
+    </div>
+    <div class="op-desc">用 PyMuPDF 把每份 PDF 按指定纸张尺寸（A3/A4/A5/Letter/Legal/B5 等）
+      重新绘制成新 PDF，<b>不经过打印系统</b>，所以完全没有对话框。
+      支持合并为一份 + 多页拼版（1/2/4/6 页合一）。</div>
+    <dl class="params">
+      <dt>关键参数</dt><dd>目标纸张、方向、份数、双面/颜色（保留视觉提示）、是否合并为单文件、拼版数</dd>
+      <dt>适用场景</dt><dd>用户没装实体打印机、想"打印"成统一纸张格式的 PDF 留档</dd>
+    </dl>
+  </div>
+
+  <div class="op-card" id="doc-compare">
+    <div class="op-head">
+      <span class="op-title">文档对比</span>
+      <span class="op-key">doc_compare</span>
+    </div>
+    <div class="op-desc">两个 PDF/Word 文档逐字/逐段对比，差异处用红色标记，生成对比 PDF。
+      适合审阅合同、查版本差异。</div>
+    <dl class="params">
+      <dt>关键参数</dt><dd>左右两份文档、对比模式（字符级/词级/行级）</dd>
+    </dl>
+  </div>
+</section>
+
+<!-- ========== 3 Excel ========== -->
+<section id="excel">
+  <h2><span class="num">3</span>Excel 处理（2 项）</h2>
+  <p>基于 <code>openpyxl</code>，<b>真实保留公式</b>（不是把公式转成计算结果），
+    同时保留字体、填充、边框、对齐、数字格式、列宽、行高、合并单元格、冻结窗格。</p>
+
+  <div class="op-card" id="excel-split">
+    <div class="op-head">
+      <span class="op-title">Excel 拆分</span>
+      <span class="op-key">excel_split</span>
+    </div>
+    <div class="op-desc">按行拆分（每 N 行一个新文件）或按工作表拆分（每个 Sheet 一个文件）。
+      <b>默认开启</b>完整格式保留：单元格逐个 copy，连带公式字符串、样式、列宽行高、合并、冻结窗格。</div>
+    <dl class="params">
+      <dt>输入</dt><dd>单份 xlsx</dd>
+      <dt>输出</dt><dd>多份 xlsx</dd>
+      <dt>关键参数</dt><dd>拆分方式（按行/按表）、每段行数、是否保留格式（默认是）</dd>
+      <dt>适用场景</dt><dd>把一年 12 个月报表拆成 12 份、把多 sheet 报告拆给不同人</dd>
+    </dl>
+    <div class="highlight success">
+      <b>公式保留示例</b>：原表 A2 = <code>=SUM(B2:B10)</code>，拆分后新表 A2 仍是这个公式字符串，
+      打开时 Excel 重新计算，不丢失任何关联。
+    </div>
+  </div>
+
+  <div class="op-card" id="excel-merge">
+    <div class="op-head">
+      <span class="op-title">Excel 合并</span>
+      <span class="op-key">excel_merge</span>
+    </div>
+    <div class="op-desc">多份 xlsx 合并成一份。可以选择"新表"（每份作为一个 sheet）或"追加"（数据追加到同一表）。
+      自动处理表头去重。</div>
+    <dl class="params">
+      <dt>关键参数</dt><dd>合并模式、是否去表头、输出 sheet 名规则</dd>
+      <dt>适用场景</dt><dd>合并各分公司月度数据、汇总各门店销售表</dd>
+    </dl>
+  </div>
+</section>
+
+<!-- ========== 4 转换 ========== -->
+<section id="convert">
+  <h2><span class="num">4</span>格式转换（3 项）</h2>
+
+  <div class="op-card" id="image-to-pdf">
+    <div class="op-head">
+      <span class="op-title">图片转 PDF</span>
+      <span class="op-key">image_to_pdf</span>
+    </div>
+    <div class="op-desc">把多张图片（PNG/JPG/BMP/TIFF）按顺序合成一份 PDF。可统一页面尺寸，
+      可保留原始尺寸（自适应）。</div>
+    <dl class="params">
+      <dt>关键参数</dt><dd>页面尺寸（A4/A3/原始）、方向、留白、质量</dd>
+      <dt>适用场景</dt><dd>把手机拍的多页文档照片合成 PDF 上交</dd>
+    </dl>
+  </div>
+
+  <div class="op-card" id="pdf-to-image">
+    <div class="op-head">
+      <span class="op-title">PDF 转图片</span>
+      <span class="op-key">pdf_to_image</span>
+    </div>
+    <div class="op-desc">把 PDF 每页导出为 PNG 或 JPG，可调 DPI（96/150/300/600）。</div>
+    <dl class="params">
+      <dt>关键参数</dt><dd>输出格式、DPI、页码范围</dd>
+      <dt>适用场景</dt><dd>把 PDF 转成可在 PPT 里贴的图、社交媒体分享</dd>
+    </dl>
+  </div>
+
+  <div class="op-card" id="office-to-pdf">
+    <div class="op-head">
+      <span class="op-title">Office 转 PDF</span>
+      <span class="op-key">office_to_pdf</span>
+    </div>
+    <div class="op-desc">Word/Excel/PPT → PDF。底层调用本机 Office（Windows 用 COM、macOS 用 osascript 驱动 Office）。
+      保留原文档的所有格式、字体、表格、图片。</div>
+    <dl class="params">
+      <dt>依赖</dt><dd>本机需要安装 Microsoft Office 或 LibreOffice</dd>
+      <dt>关键参数</dt><dd>文件类型自动识别、可选 PDF 标签结构</dd>
+      <dt>适用场景</dt><dd>批量把 Word 合同转 PDF 发客户、报表归档</dd>
+    </dl>
+  </div>
+</section>
+
+<!-- ========== 5 压缩加密 ========== -->
+<section id="compress">
+  <h2><span class="num">5</span>压缩与加密（4 项）</h2>
+
+  <div class="op-card" id="pdf-compress">
+    <div class="op-head">
+      <span class="op-title">PDF 压缩</span>
+      <span class="op-key">pdf_compress</span>
+    </div>
+    <div class="op-desc">降低图片分辨率（DPI 调整）、移除冗余对象、重写压缩流。
+      典型场景：10 MB 的扫描 PDF 压到 2 MB，肉眼基本看不出差别。</div>
+    <dl class="params">
+      <dt>关键参数</dt><dd>压缩档位（轻度/中度/重度）、目标 DPI、是否保留文本层</dd>
+      <dt>适用场景</dt><dd>邮件附件大小受限、上传到网盘节省流量</dd>
+    </dl>
+  </div>
+
+  <div class="op-card" id="pdf-encrypt">
+    <div class="op-head">
+      <span class="op-title">PDF 加密</span>
+      <span class="op-key">pdf_encrypt</span>
+    </div>
+    <div class="op-desc">给 PDF 加打开密码（必须输入密码才能看）和/或修改密码（必须输入才能编辑）。</div>
+    <dl class="params">
+      <dt>关键参数</dt><dd>打开密码、修改密码、加密算法（AES-128/AES-256）</dd>
+      <dt>适用场景</dt><dd>机密文件外发、客户合同加密</dd>
+    </dl>
+  </div>
+
+  <div class="op-card" id="pdf-decrypt">
+    <div class="op-head">
+      <span class="op-title">PDF 解密</span>
+      <span class="op-key">pdf_decrypt</span>
+    </div>
+    <div class="op-desc">移除已知密码，输出未加密副本。需要先输入正确密码才能解开。</div>
+    <dl class="params">
+      <dt>适用场景</dt><dd>批量归档已解密的合同、避免每次打开都输密码</dd>
+    </dl>
+  </div>
+
+  <div class="op-card" id="archive-compress">
+    <div class="op-head">
+      <span class="op-title">批量压缩（打包）</span>
+      <span class="op-key">archive_compress</span>
+    </div>
+    <div class="op-desc">把多个文件/文件夹打包成 ZIP，可加密码。</div>
+    <dl class="params">
+      <dt>关键参数</dt><dd>压缩级别（0-9）、是否加密（ZIP-AES）、密码</dd>
+    </dl>
+  </div>
+
+  <div class="op-card" id="archive-extract">
+    <div class="op-head">
+      <span class="op-title">批量解压</span>
+      <span class="op-key">archive_extract</span>
+    </div>
+    <div class="op-desc">批量解压压缩包，支持 ZIP/RAR/7z。支持加密压缩包（需要密码）。</div>
+    <dl class="params">
+      <dt>依赖</dt><dd>ZIP 用 stdlib；RAR/7z 调用本机 7-Zip 或 unrar</dd>
+    </dl>
+  </div>
+</section>
+
+<!-- ========== 6 高级工具 ========== -->
+<section id="advanced">
+  <h2><span class="num">6</span>高级工具（2 项）</h2>
+
+  <div class="op-card">
+    <div class="op-head">
+      <span class="op-title">PDF 页眉页脚</span>
+      <span class="op-key">pdf_header_footer</span>
+    </div>
+    <div class="op-desc">同 PDF 处理章节。</div>
+  </div>
+
+  <div class="op-card">
+    <div class="op-head">
+      <span class="op-title">文档对比</span>
+      <span class="op-key">doc_compare</span>
+    </div>
+    <div class="op-desc">同 PDF 处理章节。</div>
+  </div>
+</section>
+
+<!-- ========== 7 批量工具 ========== -->
+<section id="batch">
+  <h2><span class="num">7</span>批量工具（3 项）</h2>
+
+  <div class="op-card" id="batch-rename">
+    <div class="op-head">
+      <span class="op-title">批量重命名</span>
+      <span class="op-key">batch_rename</span>
+    </div>
+    <div class="op-desc">按规则模板批量改名。支持：<b>序号</b>（01、02…）、<b>日期</b>、<b>原名替换</b>、
+      <b>插入文本</b>。预览后再执行，撤销通过回收站。</div>
+    <dl class="params">
+      <dt>关键参数</dt><dd>模板（如 <code>报告_{YYYY-MM-DD}_{n:03}</code>）、起始序号、是否覆盖</dd>
+      <dt>适用场景</dt><dd>把"IMG_001.jpg … IMG_500.jpg"改成"旅行_001.jpg …"</dd>
+    </dl>
+    <div class="highlight warning">
+      <b>安全</b>：删除走回收站（不是永久删除），操作前可预览，按 Esc 取消。
+    </div>
+  </div>
+</section>
+
+<!-- ========== 8 批量打印详解 ========== -->
+<section id="print-detail">
+  <h2><span class="num">8</span>批量打印详解</h2>
+
+  <div class="highlight">
+    <b>核心特点</b>：批量送文件到打印机时，每份可以独立配置纸张/方向/份数/双面/颜色。
+    表头一行默认配置 + 文件表格中每行可单独覆盖，"套用默认到选中行"一键批量。
+  </div>
+
+  <h3>能力范围</h3>
+  <div class="limit-grid">
+    <div class="limit-card">
+      <div class="label">单次文件数</div>
+      <div class="value">1 – 200 份</div>
+      <div class="note">技术无硬上限，受内存和打印机队列影响</div>
+    </div>
+    <div class="limit-card">
+      <div class="label">单文件页数</div>
+      <div class="value">≤ 500 页</div>
+      <div class="note">超出建议先 PDF 压缩</div>
+    </div>
+    <div class="limit-card">
+      <div class="label">份数</div>
+      <div class="value">1 – 999</div>
+      <div class="note">每份文件提交 N 次作业，任意账户生效</div>
+    </div>
+    <div class="limit-card">
+      <div class="label">纸张</div>
+      <div class="value">7 种</div>
+      <div class="note">A3 / A4 / A5 / B5 / Letter / Legal / Executive</div>
+    </div>
+    <div class="limit-card">
+      <div class="label">方向</div>
+      <div class="value">2 种</div>
+      <div class="note">纵向 / 横向</div>
+    </div>
+    <div class="limit-card">
+      <div class="label">双面</div>
+      <div class="value">3 种</div>
+      <div class="note">单面 / 长边翻 / 短边翻（需打印机硬件支持）</div>
+    </div>
+    <div class="limit-card">
+      <div class="label">颜色</div>
+      <div class="value">2 种</div>
+      <div class="note">彩色 / 黑白</div>
+    </div>
+    <div class="limit-card">
+      <div class="label">缩放</div>
+      <div class="value">fit / 25-200%</div>
+      <div class="note">适配纸张 / 自定义比例</div>
+    </div>
+    <div class="limit-card">
+      <div class="label">拼版</div>
+      <div class="value">1/2/4/6 合 1</div>
+      <div class="note">多页合一，节省纸张</div>
+    </div>
+    <div class="limit-card">
+      <div class="label">页码筛选</div>
+      <div class="value">灵活</div>
+      <div class="note">单页（5,8）、范围（3-12）、混合（1-5,8,11-13）</div>
+    </div>
+  </div>
+
+  <h3>虚拟打印设备过滤</h3>
+  <p>下拉框只显示<b>真实物理 / 网络打印机</b>，以下"不会出纸"的设备一律隐藏，
+  避免误选后弹一堆"另存为"对话框、或静默多出一堆 PDF 文件：</p>
+  <ul style="padding-left: 24px; color: var(--text-soft); margin-bottom: 12px;">
+    <li><code>Microsoft Print to PDF</code>、<code>Microsoft XPS Document Writer</code></li>
+    <li><code>导出为WPS PDF</code>、<code>发送到WPS高级打印</code></li>
+    <li><code>OneNote</code>、<code>OneNote (Desktop)</code>、<code>Fax</code></li>
+    <li>以及名字里带 <code>PDF</code>/<code>XPS</code>/<code>虚拟打印机</code> 等特征词的其它设备</li>
+  </ul>
+  <p>过滤同时看"设备名"和"驱动名"，所以中文名、带厂商前缀的变体也能识别。
+  如果你确实要"打印为 PDF"，请用独立的 <a href="#pdf-export">PDF 导出 PDF</a> 功能（无对话框）。</p>
+
+  <h3>打印安全设计（v1.0.2 起）</h3>
+  <div class="highlight warning">
+    打印是<b>物理世界里收不回来的动作</b> —— 纸出了机器就回不去。所以本工具对
+    "出纸"这件事设了三道闸，任何一道没过都不会打印：
+    <ol style="padding-left: 22px; margin: 8px 0 0;">
+      <li><b>必须由人在界面上确认</b>：点「开始执行」后，确认框会点名打印机、
+        文件数、合计份次、预计张数，点"是"才会真的提交作业。
+        测试脚本 / 批处理 / 定时任务等无人值守路径拿不到这个授权，会被直接拒绝。</li>
+      <li><b>「仅演练不打印」勾选框</b>：勾上后一个作业都不提交，只把每份文件按当前
+        配置渲染成 <code>xxx_预览.pdf</code> 放到输出目录。建议第一次用、或换了纸张
+        配置时先演练一遍，确认版式没问题再取消勾选真打。</li>
+      <li><b>环境变量熔断</b>：设置 <code>ODA_NO_PRINT=1</code> 后，该进程内所有真实
+        打印都会被拒绝（给自动化和排障用）。</li>
+    </ol>
+  </div>
+
+  <h3>纸张 / 方向 / 份数怎么生效</h3>
+  <div class="highlight">
+    <b>份数</b>：按"每份文件提交 N 次作业、作业内份数固定 1"实现，
+    <b>任意账户都生效，不需要管理员权限</b>，也不会出现"驱动份数 × 作业份数"
+    叠乘打出一堆纸的情况。<br>
+    <b>纸张 / 方向 / 双面 / 颜色</b>：通过<b>本次作业专用的 DEVMODE</b> 下发，
+    每份文件互不影响，<b>不需要管理员权限</b>，而且<b>不会修改你的系统打印机默认设置</b>。<br>
+    <b>极少数驱动</b>可能不接受外部 DEVMODE，此时会退回打印机默认纸张，执行日志里
+    会写明原因（不会静默改掉你的设置）。
+  </div>
+  <p style="color: var(--text-soft); font-size: 13px;">
+    提示：如果你的打印机默认纸张不对（例如被 1.0.1 及更早版本改成了 A3 横向），
+    可运行 <code>python tools/fix_printer_defaults.py --restore "&lt;打印机名&gt;"</code> 还原为 A4 纵向。
+  </p>
+
+  <h3>工作流程</h3>
+  <ol style="padding-left: 24px; color: var(--text-soft); margin-bottom: 12px;">
+    <li>选打印机（下拉框只显示真实物理打印机）</li>
+    <li>导入 PDF 文件（支持拖拽）</li>
+    <li>在表格表头设默认配置（纸张/方向/份数/双面/颜色）</li>
+    <li>需要特殊配置的行 → 双击单元格改值，或多选后点"套用默认到选中行"</li>
+    <li>（建议）先勾选「仅演练不打印」跑一遍，打开输出目录核对预览 PDF 版式</li>
+    <li>确认无误 → 取消勾选 → 点"开始执行" → 在确认框里核对打印机/份数 → 点"是"</li>
+    <li>进度条显示进度，随时可点"取消"中断（已提交的任务会留在 Windows 队列，可手动清理）</li>
+  </ol>
+</section>
+
+<!-- ========== 9 性能与限制 ========== -->
+<section id="limit">
+  <h2><span class="num">9</span>性能与限制</h2>
+
+  <h3>依赖矩阵</h3>
+  <table class="specs">
+    <thead>
+      <tr><th>功能</th><th>必需依赖</th><th>备选</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>PDF 合并/拆分/水印/加密</td><td>pypdf</td><td>—</td></tr>
+      <tr><td>PDF 转图片</td><td>pdf2image + Poppler</td><td>PyMuPDF</td></tr>
+      <tr><td>PDF 导出 PDF</td><td>PyMuPDF</td><td>—</td></tr>
+      <tr><td>PDF 批量打印</td><td>pywin32 + PyMuPDF + Pillow</td><td>仅 Windows</td></tr>
+      <tr><td>Excel 处理</td><td>openpyxl</td><td>—</td></tr>
+      <tr><td>Office 转 PDF</td><td>本机 Microsoft Office</td><td>LibreOffice</td></tr>
+      <tr><td>ZIP 压缩解压</td><td>Python stdlib</td><td>—</td></tr>
+      <tr><td>RAR/7z 解压</td><td>本机 7-Zip / unrar</td><td>—</td></tr>
+    </tbody>
+  </table>
+
+  <h3>环境自检</h3>
+  <p>程序启动时会自动检查关键依赖，缺失会弹出友好提示。也可以手动运行：</p>
+  <pre style="background:#0f172a; color:#e2e8f0; padding:14px 18px; border-radius:8px;
+            font-family:ui-monospace,Menlo,Consolas,monospace; font-size:13px;
+            margin:12px 0; overflow-x:auto;"><code>python main.py --check</code></pre>
+
+  <h3>不支持的场景（明确告诉你）</h3>
+  <ul>
+    <li><b>PDF 内容编辑</b>（改文字、改图）：本工具不修改 PDF 内容，只能整页增删/水印/旋转</li>
+    <li><b>Word / PPT 内容编辑</b>：只支持"转 PDF"，不做文档内容修改</li>
+    <li><b>扫描 PDF 文字识别</b>（OCR）：没有集成 OCR 引擎，需要先用其他工具识别</li>
+    <li><b>Mac PDF 批量打印</b>：macOS 的打印子系统不同，本轮只做了 Windows 版</li>
+  </ul>
+</section>
+
+<!-- ========== 10 打包分发 ========== -->
+<section id="dist">
+  <h2><span class="num">10</span>打包与分发</h2>
+
+  <table class="specs">
+    <thead>
+      <tr><th>平台</th><th>格式</th><th>产物路径</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Windows</td><td>PyInstaller onedir</td><td><code>dist/OfficeDocAssistant/OfficeDocAssistant.exe</code></td></tr>
+      <tr><td>Windows</td><td>Inno Setup 安装包</td><td><code>dist/installer/OfficeDocAssistant-Setup-*.exe</code></td></tr>
+      <tr><td>Windows</td><td>便携 zip</td><td><code>dist/installer/OfficeDocAssistant-*-portable-win64.zip</code></td></tr>
+      <tr><td>macOS</td><td>PyInstaller + DMG</td><td><code>dist/installer/OfficeDocAssistant-*.dmg</code></td></tr>
+      <tr><td>CI</td><td>GitHub Actions</td><td><code>.github/workflows/build-installers.yml</code></td></tr>
+    </tbody>
+  </table>
+
+  <h3>本地构建命令</h3>
+  <pre style="background:#0f172a; color:#e2e8f0; padding:12px 16px; border-radius:8px;
+            font-family:ui-monospace,Menlo,Consolas,monospace; font-size:13px;
+            margin:8px 0; overflow-x:auto;"><code># Windows：先跑 PyInstaller，再跑 Inno Setup
+build\build_win.bat
+build\installer_win.iss   # 用 Inno Setup Compiler 打开
+
+# macOS：先 PyInstaller 再打 DMG
+bash build/build_macos_dmg.sh</code></pre>
+</section>
+
+<!-- ========== 11 FAQ ========== -->
+<section id="faq">
+  <h2><span class="num">11</span>常见问题</h2>
+
+  <h3>Q1. Excel 拆分后公式变成数字了？</h3>
+  <p>A：本工具默认开启"保留格式"，公式字符串（<code>=SUM(A1:A10)</code>）会被原样复制到新表，
+    打开新表时 Excel 会重新计算。如果你看到的是数字，那是因为勾选了"只保留值"——保持默认即可。</p>
+
+  <h3>Q2. 批量打印时打印机列表是空的？</h3>
+  <p>A：检查 Windows 设置里是否添加了打印机。本工具会隐藏 <code>Microsoft Print to PDF</code>、
+    <code>导出为WPS PDF</code>、<code>Microsoft XPS Document Writer</code> 等虚拟打印设备，
+    只显示真实物理打印机。如果没有装任何实体打印机，请用 <a href="#pdf-export">PDF 导出 PDF</a>。</p>
+
+  <h3>Q3. 会不会出现"我没操作，打印机自己开始打印"？</h3>
+  <p>A：不会。<b>v1.0.2 起真实打印必须由人在界面上点「开始执行」并在确认框里点"是"</b>，
+    确认框会明确列出打印机名、文件数、合计份次与预计张数；测试、脚本、定时任务等
+    无人值守路径拿不到这个授权，会被直接拒绝（抛 <code>PrintNotAuthorized</code>）。
+    想彻底关掉出纸，还可以勾「仅演练不打印」或设置环境变量 <code>ODA_NO_PRINT=1</code>。</p>
+
+  <h3>Q4. 打印纸张设置没生效？</h3>
+  <p>A：v1.0.2 起纸张/方向/双面/颜色通过本次作业专用的 DEVMODE 下发，
+    <b>不需要管理员权限、也不会改你的系统打印机默认设置</b>。
+    如果日志里出现"本次按打印机默认纸张/方向提交"，说明该驱动不接受外部 DEVMODE
+    （极少数驱动如此），此时内容仍按你选的纸张尺寸渲染，由驱动缩放适配；
+    要真正切换纸盒，请在 Windows「打印首选项」里给该打印机设置好纸张。</p>
+
+  <h3>Q5. 打印机的默认纸张被改乱了怎么恢复？</h3>
+  <p>A：1.0.1 及更早版本会持久改掉打印机默认设置（这是已修复的缺陷）。
+    先运行 <code>python tools/fix_printer_defaults.py</code> 看现状，再执行
+    <code>python tools/fix_printer_defaults.py --restore "&lt;打印机名&gt;"</code> 还原为 A4 纵向 /
+    1 份 / 彩色 / 单面。也可以直接在 Windows「打印首选项」里手动改回去。</p>
+
+  <h3>Q6. 能处理加密的 PDF 吗？</h3>
+  <p>A：加密 PDF 需要先在 <b>PDF 解密</b> 里输入密码解开，再做其他操作。如果 PDF 没设打开密码但设了修改密码，
+    大部分功能不受影响。</p>
+
+  <h3>Q6. 一次能处理多少个文件？</h3>
+  <p>A：技术无上限，但实际体验：
+  <ul>
+    <li>PDF 拆分/合并：500 份以内流畅</li>
+    <li>Office 转 PDF：受 Office 启动开销限制，100 份左右建议分批</li>
+    <li>批量打印：≤ 200 份推荐，超过请关注打印机队列</li>
+    <li>批量重命名：5000 份以内流畅</li>
+  </ul></p>
+
+  <h3>Q7. 跨平台能用吗？</h3>
+  <p>A：核心功能（PDF / Excel / 转换 / 批量）跨平台。打印仅 Windows。Office 转 PDF 在 macOS 上需要
+    LibreOffice（命令行），Windows 上用本机 Office。</p>
+</section>
+
+<footer>
+  办公文档一键处理助手 · v1.0.2 · 完全本地 · 无追踪 · 无广告
+</footer>
+
+</div>
+</body>
+</html>
