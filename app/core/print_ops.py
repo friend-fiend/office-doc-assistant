@@ -545,26 +545,62 @@ def _image_to_dib_bytes(im, top_down: bool = True) -> bytes:
 
 # ================================================================ Op 注册
 def _build_print_op() -> OpDef | None:
-    """构造打印 OpDef（物理打印机 + 每文件独立配置）。"""
+    """构造打印 OpDef（物理打印机 + 每文件独立配置）。
+
+    为什么"没有真实打印机"也要注册（而不是 return None）：
+    ------------------------------------------------------
+    1.0.2 之前，本机只有虚拟打印设备（Microsoft Print to PDF / WPS PDF / Fax
+    等，几乎每台 Windows 都自带）时，这里直接 return None —— 于是**整个
+    「PDF 批量打印」按钮从侧栏消失**，用户只会觉得"功能不见了"，完全不知道
+    为什么、也不知道该装什么。真实用户反馈：「我看打印功能怎么不见了」。
+
+    1.0.1 之所以"看得到"，是因为旧版过滤太弱，把虚拟设备当成了真打印机 ——
+    按钮在，但它是坏的（点下去得到一堆 PDF 而不是纸），这正是当时报障的根源。
+
+    正确姿势：功能永远在，但把"为什么现在打不了"讲清楚。
+    """
     if not PYWIN32_OK:
         return None
     printers = list_printers(real_only=True)
     virtual = list_virtual_pdf_printers()
-    if not printers:
-        return None
 
-    default = default_printer()
-    if default and default in printers:
-        pass
+    no_real_printer = not printers
+    if no_real_printer:
+        default = ""
+        choices: list[tuple[str, str]] = [("（未检测到可出纸的打印机）", "")]
     else:
-        # 系统默认落在被过滤的虚拟设备上（例如 Microsoft Print to PDF），
-        # 这时绝不能顺手把它当默认值 —— 否则"开始执行"会静默产出一堆 PDF。
-        default = printers[0]
+        default = default_printer()
+        if default and default in printers:
+            pass
+        else:
+            # 系统默认落在被过滤的虚拟设备上（例如 Microsoft Print to PDF），
+            # 这时绝不能顺手把它当默认值 —— 否则"开始执行"会静默产出一堆 PDF。
+            default = printers[0]
+        choices = [(p, p) for p in printers]
 
-    choices = [(p, p) for p in printers]
-    note = ""
-    if virtual:
+    # 标题备注的优先级：**"没有可出纸的打印机"必须压过"隐藏了几台虚拟设备"** ——
+    # 前者是用户需要立刻知道的事，后者只是背景信息。顺序写反时，只有虚拟设备的
+    # 机器上标题还是"已隐藏 N 台…"，用户根本看不出"现在打不了"。
+    if no_real_printer:
+        note = "（未检测到可出纸的打印机）"
+    elif virtual:
         note = f"（已隐藏 {len(virtual)} 台虚拟打印设备，如 {virtual[0]}）"
+
+    if no_real_printer:
+        desc = (
+            "把 PDF 发送到本机或网络打印机。支持每文件独立配置纸张/方向/份数/双面/颜色。\n\n"
+            "⚠️ 本机当前没有可出纸的打印机：Windows 自带的 Microsoft Print to PDF、\n"
+            "XPS Document Writer、Fax 以及 WPS/OneNote 等都是\"虚拟设备\"，不会出纸，\n"
+            "所以不出现在列表里。\n"
+            "· 只想把 PDF 变成指定纸张的 PDF 文件 → 请用「格式转换 → PDF 导出 PDF（批量）」\n"
+            "· 确实要打纸质文件 → 请先连接/安装物理打印机，再重启本程序"
+        )
+    else:
+        desc = (
+            "把 PDF 发送到本机或网络打印机。支持每文件独立配置纸张/方向/份数/双面/颜色，"
+            "默认配置可一键批量应用到选中文件。\n"
+            "「仅演练不打印」勾选后只生成预览 PDF，不会向打印机提交任何作业。"
+        )
 
     return OpDef(
         key="pdf_print",
@@ -573,11 +609,7 @@ def _build_print_op() -> OpDef | None:
         accepts=("pdf",),
         mode="per_file",
         hardware=True,
-        description=(
-            "把 PDF 发送到本机或网络打印机。支持每文件独立配置纸张/方向/份数/双面/颜色，"
-            "默认配置可一键批量应用到选中文件。\n"
-            "「仅演练不打印」勾选后只生成预览 PDF，不会向打印机提交任何作业。"
-        ),
+        description=desc,
         confirm=True,
         confirm_text=(
             "即将把选中的文件发送到打印机，开始打印前请确认：\n"
@@ -591,7 +623,11 @@ def _build_print_op() -> OpDef | None:
         params=(
             Param("printer", "打印机", "choice", default=default,
                   choices=choices, width=32,
-                  hint=("列表中已隐藏虚拟 PDF 打印机（选它们不会出纸，只会多出一堆 "
+                  hint=("本机没有可出纸的打印机（列表里只列真实设备，虚拟 PDF 打印机"
+                        "已隐藏，选它们不会出纸只会多出一堆 PDF）。连接打印机后重启"
+                        "本程序即可；只想生成 PDF 请用「PDF 导出 PDF」。"
+                        if no_real_printer else
+                        "列表中已隐藏虚拟 PDF 打印机（选它们不会出纸，只会多出一堆 "
                         "PDF 文件）。如需输出为 PDF 请用「PDF 导出 PDF」。")),
             Param("dry_run", "仅演练不打印", "bool", default=False,
                   hint=("勾选后**不向打印机提交任何作业**，只把每份文件按当前配置"
@@ -822,7 +858,25 @@ def _do_print(ctx: OpContext, files: list[str], params: dict) -> None:
         if reason:
             raise PrintNotAuthorized(reason)
         if not printer:
-            raise ValueError("未选择打印机")
+            # 区分"没选"和"根本没有"：后者才是 1.0.2 里最常见的场景
+            # （机器上只有虚拟打印设备 → 下拉框里只有占位项 → 什么都没选）。
+            if not list_printers(real_only=True):
+                raise RuntimeError(
+                    "本机没有可出纸的打印机 —— Windows 自带的 Microsoft Print to PDF、"
+                    "XPS Document Writer、Fax 以及 WPS / OneNote 等都是\"虚拟设备\"，"
+                    "不会出纸，所以不出现在列表里。\n"
+                    "· 要打纸质文件：请先连接/安装物理打印机，再重启本程序\n"
+                    "· 只想生成指定纸张的 PDF：请改用「格式转换 → PDF 导出 PDF（批量）」")
+            raise ValueError("未选择打印机，请在「打印机」下拉框里选一台。")
+
+        # 防线：旧配置 / 脚本传参可能绕过 UI 塞进来一台虚拟设备。
+        # 绝不能静默执行 —— 那会复刻 1.0.1 的"打印出一堆 PDF"事故。
+        _by_name = {d.get("name"): d for d in _enum_printers()}
+        _hit = _by_name.get(printer)
+        if _hit is not None and _hit.get("virtual"):
+            raise ValueError(
+                f"「{printer}」是虚拟打印设备，不会出纸（只会生成 PDF 文件）。"
+                "真实打印请选择物理打印机；生成 PDF 请用「PDF 导出 PDF」。")
 
     scaling = str(params.get("scaling") or "fit")
     scale_pct = max(50, min(int(params.get("scale_pct") or 100), 200))

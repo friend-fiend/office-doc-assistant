@@ -738,6 +738,10 @@
   </ul>
   <p>过滤同时看"设备名"和"驱动名"，所以中文名、带厂商前缀的变体也能识别。
   如果你确实要"打印为 PDF"，请用独立的 <a href="#pdf-export">PDF 导出 PDF</a> 功能（无对话框）。</p>
+  <p><b>一台真实打印机都没有时会怎样？</b>（v1.0.3 起）打印功能<b>仍然显示</b>，
+  但标题会变成「PDF 批量打印（未检测到可出纸的打印机）」，打印机下拉框只剩占位项；
+  此时点「开始执行」会被拦下，并提示你连接打印机或改用「PDF 导出 PDF」。
+  这样功能入口永远找得到，不会再"莫名其妙消失"。</p>
 
   <h3>打印安全设计（v1.0.2 起）</h3>
   <div class="highlight warning">
@@ -854,10 +858,14 @@ bash build/build_macos_dmg.sh</code></pre>
   <p>A：本工具默认开启"保留格式"，公式字符串（<code>=SUM(A1:A10)</code>）会被原样复制到新表，
     打开新表时 Excel 会重新计算。如果你看到的是数字，那是因为勾选了"只保留值"——保持默认即可。</p>
 
-  <h3>Q2. 批量打印时打印机列表是空的？</h3>
-  <p>A：检查 Windows 设置里是否添加了打印机。本工具会隐藏 <code>Microsoft Print to PDF</code>、
-    <code>导出为WPS PDF</code>、<code>Microsoft XPS Document Writer</code> 等虚拟打印设备，
-    只显示真实物理打印机。如果没有装任何实体打印机，请用 <a href="#pdf-export">PDF 导出 PDF</a>。</p>
+  <h3>Q2. 批量打印时打印机列表是空的 / 打印功能"不见了"？</h3>
+  <p>A：本工具会隐藏 <code>Microsoft Print to PDF</code>、<code>导出为WPS PDF</code>、
+    <code>Microsoft XPS Document Writer</code> 等虚拟打印设备，只显示真实物理打印机。
+    如果你的电脑<b>没有装任何实体打印机</b>（只靠 Windows 自带的虚拟设备），会出现两种情况：
+    <b>v1.0.2 及更早版本</b>打印功能会整个从侧栏消失，且无任何提示；
+    <b>v1.0.3 起</b>功能始终显示，标题会标注「未检测到可出纸的打印机」，
+    执行时也会解释原因。无论哪个版本，此时想生成指定纸张的 PDF 文件，
+    都请用 <a href="#pdf-export">PDF 导出 PDF</a>；想打纸质文件请先连接/安装实体打印机。</p>
 
   <h3>Q3. 会不会出现"我没操作，打印机自己开始打印"？</h3>
   <p>A：不会。<b>v1.0.2 起真实打印必须由人在界面上点「开始执行」并在确认框里点"是"</b>，
@@ -897,7 +905,7 @@ bash build/build_macos_dmg.sh</code></pre>
 </section>
 
 <footer>
-  办公文档一键处理助手 · v1.0.2 · 完全本地 · 无追踪 · 无广告
+  办公文档一键处理助手 · v1.0.3 · 完全本地 · 无追踪 · 无广告
 </footer>
 
 </div>

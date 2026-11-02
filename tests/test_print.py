@@ -220,6 +220,55 @@ def main() -> int:
     else:
         raise AssertionError("未授权的打印竟然被执行了 —— 本次事故的回归防线失效！")
 
+    # ========== 4.5 没有真实打印机时，打印功能必须"还在"，且讲清楚为什么打不了
+    # 1.0.2 在这里写了 `if not printers: return None`，导致只有虚拟打印设备的
+    # 机器上整个「PDF 批量打印」按钮从侧栏消失 —— 真实用户反馈：
+    # 「我看打印功能怎么不见了」。这条用例把该场景永久钉死。
+    _orig_lp = (po.list_printers, po.list_virtual_pdf_printers, po.default_printer)
+    try:
+        po.list_printers = lambda real_only=True: []          # 一台真打印机都没有
+        po.list_virtual_pdf_printers = lambda: ["Microsoft Print to PDF"]
+        po.default_printer = lambda: "Microsoft Print to PDF"
+
+        op_nopr = po._build_print_op()
+        assert op_nopr is not None, (
+            "没有真实打印机时 _build_print_op 返回 None —— 打印功能整块消失，"
+            "这就是「打印功能不见了」的根因")
+        assert "未检测到" in op_nopr.title, f"标题应说明现状：{op_nopr.title!r}"
+        _pp = next(p for p in op_nopr.params if p.key == "printer")
+        assert _pp.default == "" and _pp.choices and _pp.choices[0][1] == "", \
+            f"打印机参数应退化为占位空值：{(_pp.default, _pp.choices)!r}"
+        assert "虚拟" in op_nopr.description, "描述里必须告诉用户虚拟设备为什么被隐藏"
+        print(f"[OK] 无真实打印机：功能仍在，标题 = {op_nopr.title!r}")
+
+        # 执行路径：非演练 + 未选打印机 → 必须给出"怎么办"的明确解释
+        ctx_nopr = make_ctx(op_nopr, os.path.join(sandbox, "noprinter_out"),
+                            allow_real_print=True)
+        try:
+            po._do_print(ctx_nopr, pdfs[:1], {"printer": "", "dry_run": False})
+        except RuntimeError as exc:
+            assert ("虚拟" in str(exc) and "导出" in str(exc)), \
+                f"报错文案应同时说明原因与出路：{exc}"
+            print(f"[OK] 无真实打印机执行被拦下并解释：{str(exc).splitlines()[0][:60]}…")
+        else:
+            raise AssertionError("机器上没有真实打印机，竟然没拦住打印请求！")
+
+        # 防线：脚本/旧配置塞进来一台虚拟设备名 → 点名拒绝，绝不静默出 PDF
+        try:
+            po._do_print(make_ctx(op_print, os.path.join(sandbox, "virtual_out"),
+                                  allow_real_print=True),
+                         pdfs[:1],
+                         {"printer": "Microsoft Print to PDF", "dry_run": False})
+        except ValueError as exc:
+            assert "虚拟" in str(exc), f"应点名这是虚拟设备：{exc}"
+            print("[OK] 虚拟设备被点名拒绝（脚本传参也拦得住）")
+        else:
+            raise AssertionError("把 Microsoft Print to PDF 传进去竟然没拦 —— 会复刻 1.0.1 事故！")
+    finally:
+        (po.list_printers,
+         po.list_virtual_pdf_printers,
+         po.default_printer) = _orig_lp
+
     # 授权 + 演练模式 → 允许执行，但仍然不出纸
     ctx_dry = make_ctx(op_print, os.path.join(sandbox, "dry_out"),
                        allow_real_print=True, dry_run=True)
