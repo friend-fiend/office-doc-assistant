@@ -20,6 +20,7 @@ CATEGORIES: tuple[tuple[str, str], ...] = (
     ("pdf_pages", "PDF 页面操作"),
     ("convert", "格式转换"),
     ("batch", "批量文件"),
+    ("invoice", "发票整理"),
     ("compress", "压缩加密"),
     ("advanced", "高级工具"),
 )

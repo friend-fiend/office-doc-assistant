@@ -22,6 +22,7 @@ from . import (  # noqa: E402,F401
     compare_ops,
     excel_ops,
     image_to_pdf,
+    invoice_ops,
     office_to_pdf,
     pdf_compress,
     pdf_pages,
