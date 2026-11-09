@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import datetime as _dt
 import os
 import shutil
 import sys
@@ -184,7 +185,32 @@ def main() -> int:
         })
         out_xlsx = ctx.report.outputs[0]
         wb = load_workbook(out_xlsx)
-        check("端到端：三张工作表", wb.sheetnames == ["发票明细", "项目汇总", "待确认"], str(wb.sheetnames))
+        check("端到端：四张工作表（按日期在最前）",
+              wb.sheetnames == ["按日期", "发票明细", "项目汇总", "待确认"], str(wb.sheetnames))
+
+        # ---- 按日期：同一天的花费必须合成一行
+        ws0 = wb["按日期"]
+        hdr0 = [c.value for c in ws0[2]]
+        check("按日期：表头含 日期/费用明细/交通",
+              all(k in hdr0 for k in ("日期", "费用明细", "交通", "当日合计")), str(hdr0))
+        rows0 = [[c.value for c in r] for r in ws0.iter_rows(min_row=3)]
+        # openpyxl 读回来是 datetime，比较前统一成 date
+        by_day = {(r[1].date() if hasattr(r[1], "date") else r[1]): r
+                  for r in rows0 if hasattr(r[1], "year")}
+        check("按日期：三张不同日期的票 = 三行", len(by_day) == 3, f"{sorted(by_day)}")
+        r_rail = by_day.get(_dt.date(2026, 6, 10))
+        check("按日期：6/10 记的是动车行程且交通列=139",
+              bool(r_rail) and abs((r_rail[6] or 0) - 139.0) < 0.01
+              and "厦门北站" in str(r_rail[5]), str(r_rail))
+        r_hotel = by_day.get(_dt.date(2026, 7, 8))
+        check("按日期：7/8 住宿列=465 且写明酒店名",
+              bool(r_hotel) and abs((r_hotel[8] or 0) - 465.0) < 0.01
+              and "安嘉酒店" in str(r_hotel[5]), str(r_hotel))
+        check("按日期：住宿行备注提示日期口径", "入住" in str(r_hotel[12]) if r_hotel else False,
+              str(r_hotel[12]) if r_hotel else "")
+        check("按日期：合计行 = 三票之和",
+              abs((rows0[-1][9] or 0) - 623.83) < 0.01, str(rows0[-1][9]))
+
         ws = wb["发票明细"]
         check("端到端：有效票 3 张（重复票被剔除）", ws.max_row == 4, f"实际 {ws.max_row - 1} 行")
         first = [c.value for c in ws[2]]

@@ -24,6 +24,12 @@
 
 5. 铁路票有「乘车日期」和「开票日期」两个日期，报销口径用乘车日期；
    住宿/餐饮票面没有消费日期，只有开票日期，说明里注明。
+
+6. 「按日期」表是主表，一行 = 某项目的某一天：同一天的所有票合进一行的
+   「费用明细」多行文本，金额按 交通/餐饮/住宿 分列。
+   两类票不这么算：① 一张票含多天行程（网约车月结，实测有 10 段的）——
+   金额无法按天拆，单独成段并逐段列日期，否则整笔钱会砸在某一天上；
+   ② 日期未知的票 —— 列在表尾单独一段。都不丢，也不猜。
 """
 from __future__ import annotations
 
@@ -68,6 +74,7 @@ RE_TRIP_LINE = re.compile(
 
 HEAD_FILL = PatternFill("solid", fgColor="DDEBF7")
 HEAD_FONT = Font(bold=True)
+SUB_FILL = PatternFill("solid", fgColor="F2F2F2")
 WRAP = Alignment(wrap_text=True, vertical="top")
 
 # 明细表列
@@ -106,6 +113,7 @@ class Invoice:
     seller: str = ""
     buyer: str = ""
     passenger: str = ""
+    qty: str = ""           # 票面数量（住宿票的间/晚数），读不到就留空，不猜
     trips: list[Trip] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)   # 说明（含待确认原因）
 
@@ -141,6 +149,63 @@ def _f(s: str | None) -> float | None:
         return float(str(s).replace(",", ""))
     except ValueError:
         return None
+
+
+def _lodging_qty(text: str) -> str:
+    """住宿票的「数量」（票面写作 间/晚/人）。读不到返回空串，绝不按文件名猜。"""
+    for line in text.splitlines():
+        if "住宿" not in line:
+            continue
+        parts = [p for p in re.split(r"\s{2,}", line.strip()) if p]
+        # 期望：['*生产生活服务*住宿费', '间', '2 219.3396…', '438.68', '6%', '26.32']
+        # 注意「数量」和「单价」之间可能只有一个空格，会被并成一段，所以取前导数字。
+        if len(parts) >= 3 and len(parts[1]) <= 2 and not parts[1][:1].isdigit():
+            m = re.match(r"(\d+)(?:\s|$)", parts[2])
+            if m:
+                return m.group(1)
+    return ""
+
+
+# ================================================================= 日期归一
+WEEKDAYS = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+
+
+def iso_date(raw: str) -> str:
+    """把 2026年07月08日 / 2026-07-08 / 2026.7.8 统一成 2026-07-08。
+
+    识别不了就返回空串 —— 调用方据此把票放进「日期未知」，而不是随便猜一天。
+    """
+    if not raw:
+        return ""
+    m = re.search(r"(\d{4})\D{1,2}(\d{1,2})\D{1,2}(\d{1,2})", str(raw))
+    if not m:
+        return ""
+    y, mo, d = (int(g) for g in m.groups())
+    if not (1 <= mo <= 12 and 1 <= d <= 31):
+        return ""
+    return f"{y:04d}-{mo:02d}-{d:02d}"
+
+
+def weekday_cn(iso: str) -> str:
+    """2026-06-10 → 周三。"""
+    import datetime as _dt
+    try:
+        y, m, d = (int(x) for x in iso.split("-"))
+        return WEEKDAYS[_dt.date(y, m, d).weekday()]
+    except (ValueError, TypeError, IndexError):
+        return ""
+
+
+def invoice_day(inv: "Invoice") -> tuple[str, bool]:
+    """这张票该记到哪一天，以及日期是否只是开票日期。
+
+    报销口径优先「消费/乘车日期」；住宿、餐饮票面没有消费日期，只能退回开票日期，
+    第二个返回值 True 表示「日期依据较弱」，写表时要在备注里讲清楚。
+    """
+    d = iso_date(inv.use_date)
+    if d:
+        return d, False
+    return iso_date(inv.invoice_date), True
 
 
 # ================================================================= 项目归属
@@ -206,26 +271,112 @@ def _seller_and_buyer(text: str, inv: Invoice) -> None:
         inv.buyer = m.group(1)
 
 
-def _trip_rows(text: str, inv: Invoice) -> None:
-    """从「出行人/出发地/到达地」表格抽出行段。
+def _join_cell(ws_: list) -> str:
+    """把同一列里的若干 word 拼回一个单元格文本（贴合处不加空格）。"""
+    out, prev_x1 = "", None
+    for w in sorted(ws_, key=lambda x: x[0]):
+        if out and prev_x1 is not None and w[0] - prev_x1 > 2:
+            out += " "
+        out += w[4]
+        prev_x1 = w[2]
+    return out.strip()
 
-    实测（48 张样票）：PyMuPDF sort 模式把每段行程规整成一行、列间 ≥2 空格，
-    直接按行正则提取即可，不需要 words 坐标分列 —— 几何法反而会被
-    「横跨日期列空间的长地址」击败。
+
+def _trip_rows(page, text: str, inv: Invoice) -> None:
+    """从「出行人/日期/出发地/到达地」表格抽出行段。
+
+    用 words 坐标做两件事，缺一不可：
+    · **按 y 聚类**成行 —— 长地址折行时，续行要归到上一段行程；
+    · **按表头 x 边界分列** —— 地址文字常从列左边界起排，比表头文字更靠左，
+      所以边界取「左列右沿 ↔ 右列左沿」的中点，而不是表头的 x0。
+    纯文本正则在这张票上会翻车：单元格被裁剪后列间只剩 1 个空格，
+    `\\s{2,}` 分不开出发地与到达地，于是拼出「→无  其他」这种垃圾。
     """
-    rows = RE_TRIP_LINE.findall(text)
-    for m in rows:
-        t = Trip(
-            date=m[2],
-            origin=m[3].strip(),
-            dest=m[4].strip(),
-            seat=m[5].strip(),
-            vehicle=m[6].strip(),
-        )
+    try:
+        words = page.get_text("words")
+    except Exception:
+        words = []
+    header = {}
+    for w in words:
+        if w[4] in ("出行人", "出行日期", "出发地", "到达地", "等级", "交通工具类型"):
+            header[w[4]] = w
+    if len(header) < 4 or "出发地" not in header or "到达地" not in header:
+        _trip_rows_text(text, inv)          # 没有坐标信息时退回正则（老路径）
+        return
+
+    o, d = header["出发地"], header["到达地"]
+    # 列归属用「最近的表头中心」：地址文字常从列左边界起排、甚至比表头更靠左，
+    # 用「区间边界」会把出发地判给日期列。中心法在这批票上两种版面都稳。
+    centers = [(k, (header[k][0] + header[k][2]) / 2) for k in
+               ("出行日期", "出发地", "到达地", "等级", "交通工具类型") if k in header]
+    slot = {"出发地": "origin", "到达地": "dest", "等级": "seat",
+            "交通工具类型": "vehicle"}
+    left = header["出行日期"][2] + 10 if "出行日期" in header else o[0] - 40
+
+    top = max(w[3] for w in header.values()) + 1
+    bottom = 1e9
+    for w in words:
+        if "价税合计" in w[4]:
+            bottom = min(bottom, w[1])
+
+    rows: list[dict] = []
+    for w in sorted(words, key=lambda w: (w[1], w[0])):
+        cy = (w[1] + w[3]) / 2
+        if not (top < cy < bottom):
+            continue
+        if rows and abs(cy - rows[-1]["y"]) <= 6:
+            rows[-1]["ws"].append(w)
+            rows[-1]["y"] = (rows[-1]["y"] + cy) / 2
+        else:
+            rows.append({"y": cy, "ws": [w]})
+
+    cur: Trip | None = None
+    for row in rows:
+        cols: dict[str, list] = {"origin": [], "dest": [], "seat": [], "vehicle": []}
+        date, name = "", ""
+        for w in row["ws"]:
+            txt = w[4]
+            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", txt):
+                date = txt
+                continue
+            if w[0] < left:
+                if not name and re.fullmatch(r"[\u4e00-\u9fa5]{2,4}", txt):
+                    name = txt
+                continue
+            key = min(centers, key=lambda kv: abs(kv[1] - (w[0] + w[2]) / 2))[0]
+            if key in slot:
+                cols[slot[key]].append(w)
+        if date:
+            seat = _join_cell(cols["seat"])
+            vehicle = _join_cell(cols["vehicle"])
+            # 有的票版式里没有「等级」列，等级值会落到最后一列 → 最后一段才是交通工具
+            if "等级" not in header and vehicle and len(vehicle.split(" ")) > 1:
+                bits = vehicle.split(" ")
+                seat, vehicle = bits[0], bits[-1]
+            cur = Trip(date=date, origin=_join_cell(cols["origin"]),
+                       dest=_join_cell(cols["dest"]), seat=seat, vehicle=vehicle)
+            if not inv.passenger and name:
+                inv.passenger = name
+            inv.trips.append(cur)
+        elif cur is not None:
+            # 折行续行：按列拼回同一段行程
+            cur.origin += _join_cell(cols["origin"])
+            cur.dest += _join_cell(cols["dest"])
+
+    if inv.trips:
+        inv.trips.sort(key=lambda t: (t.date, t.origin))
+        inv.use_date = inv.trips[0].date
+
+
+def _trip_rows_text(text: str, inv: Invoice) -> None:
+    """无坐标时的兜底：按行正则（只对列间留 2+ 空格的票有效）。"""
+    for m in RE_TRIP_LINE.findall(text):
         if not inv.passenger:
             inv.passenger = m[0].strip()
-        inv.trips.append(t)
+        inv.trips.append(Trip(date=m[2], origin=m[3].strip(), dest=m[4].strip(),
+                              seat=m[5].strip(), vehicle=m[6].strip()))
     if inv.trips:
+        inv.trips.sort(key=lambda t: (t.date, t.origin))
         inv.use_date = inv.trips[0].date
 
 
@@ -247,6 +398,7 @@ def _general_ticket(page, text: str, inv: Invoice) -> None:
     if inv.kind == "住宿" and inv.seller:
         inv.notes.append(f"酒店名取自销售方：{inv.seller}")
         inv.subtype = "酒店"
+        inv.qty = _lodging_qty(text)
 
     # 行 1：金额行（项目行里的 金额/税率/税额；合计行兜底）
     amounts = re.findall(r"[¥￥]\s*(-?[\d,]+\.\d{2})", text)
@@ -262,7 +414,7 @@ def _general_ticket(page, text: str, inv: Invoice) -> None:
     elif amounts:
         inv.total = _f(amounts[-1])
 
-    _trip_rows(text, inv)
+    _trip_rows(page, text, inv)
 
 
 def parse_invoice(path: str, project: str) -> Invoice | Unreadable:
@@ -306,6 +458,227 @@ def parse_invoice(path: str, project: str) -> Invoice | Unreadable:
         doc.close()
 
 
+# ================================================================= 按日期汇总
+KIND_DISPLAY = {"出行": "交通", "餐饮": "餐饮", "住宿": "住宿", "其他": "其他"}
+KIND_ORDER = {"出行": 0, "餐饮": 1, "住宿": 2, "其他": 3}
+# 这些是「解析过程说明」，属于审计信息，只该出现在「发票明细」的说明列。
+# 「按日期」是给人照着抄报销单的，备注列只留真正需要人动手的事。
+NOISE_NOTES = ("酒店名取自销售方", "铁路票票面无税额列", "进项税额按 9%", "税号 ", "销售方税号")
+
+
+def detail_text(inv: Invoice) -> str:
+    """一句话写清这张票，模仿人手写「费用明细」的习惯。
+
+    例：``的士：海上五月花3期(西南门)→厦门北站(南进站口) ¥19.83``
+         ``动车：厦门北站→宁德站 ¥139.00``
+         ``住宿：…安嘉酒店有限公司（票面数量 2） ¥465.00``
+    """
+    money = f"¥{inv.total:,.2f}" if inv.total is not None else "金额未读到"
+    if inv.kind == "出行":
+        if inv.subtype == "动车":
+            role = "动车"
+        elif "出租" in inv.subtype or "网约" in inv.subtype:
+            role = "的士"
+        else:
+            role = inv.subtype or "交通"
+        trips = [t for t in inv.trips if t.date]
+        if not trips:
+            return f"{role}：{inv.route or '（未读到起终点）'} {money}"
+        days = sorted({t.date for t in trips})
+        if len(days) <= 1:
+            routes = "；".join(f"{t.origin or '?'}→{t.dest or '?'}" for t in trips)
+            return f"{role}：{routes} {money}"
+        # 一张票横跨多天（网约车月结）：逐段列日期，否则整段金额会被误读成某一天的车费
+        lines = [f"{role}（{days[0][5:]}–{days[-1][5:]}，{len(trips)} 段）{money}"]
+        lines += [f"  {t.date[5:]} {t.origin or '?'}→{t.dest or '?'}" for t in trips]
+        return "\n".join(lines)
+    if inv.kind == "住宿":
+        qty = f"（票面数量 {inv.qty}）" if inv.qty else ""
+        return f"住宿：{inv.seller or '（未读到酒店名）'}{qty} {money}"
+    if inv.kind == "餐饮":
+        return f"餐饮：{inv.seller or '（未读到餐厅名）'} {money}"
+    return f"其他：{inv.seller or inv.subtype or '未识别'} {money}"
+
+
+def _clean_notes(items: list[Invoice]) -> str:
+    notes: list[str] = []
+    for inv in items:
+        for n in inv.notes:
+            if n.startswith(NOISE_NOTES) or n in notes:
+                continue
+            notes.append(n)
+    return "；".join(notes)
+
+
+def _section_label(ws, row: int, ncol: int, text: str) -> None:
+    ws.cell(row=row, column=1, value=text).font = Font(bold=True, color="C00000")
+    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=ncol)
+
+
+def _write_date_sheet(wb: Workbook, invoices: list[Invoice]) -> None:
+    """「按日期」主表：一行 = 某项目某一天的全部花费（对齐用户的手工报销单）。"""
+    import datetime as _dt
+
+    present = {inv.kind for inv in invoices}
+    money_cols = [("交通", "出行"), ("餐饮", "餐饮"), ("住宿", "住宿")]
+    if "其他" in present:
+        money_cols.append(("其他", "其他"))
+
+    headers = (["序号", "日期", "星期", "项目", "费用类别", "费用明细"]
+               + [label for label, _ in money_cols]
+               + ["当日合计", "张数", "出行人", "备注"])
+    ncol = len(headers)
+    first_money = 7
+    total_col = first_money + len(money_cols)
+
+    ws = wb.create_sheet("按日期")
+    projects = sorted({inv.project for inv in invoices})
+    days = []
+    for inv in invoices:
+        d, weak = invoice_day(inv)
+        if d:
+            days.append(d)
+    period = f"{min(days)} ~ {max(days)}" if days else "日期未读到"
+    label = projects[0] if len(projects) == 1 else "发票整理汇总"
+    ws.cell(row=1, column=1, value=f"{label} 费用明细（{period}）").font = Font(bold=True, size=13)
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=ncol)
+
+    for c, h in enumerate(headers, 1):
+        cell = ws.cell(row=2, column=c, value=h)
+        cell.fill, cell.font = HEAD_FILL, HEAD_FONT
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    groups: dict[tuple[str, str], list[Invoice]] = {}
+    unknown: list[Invoice] = []
+    spanning: list[Invoice] = []
+    for inv in invoices:
+        d, _ = invoice_day(inv)
+        if not d:
+            unknown.append(inv)
+            continue
+        # 一张票含跨天行程（网约车月结）：金额无法按天拆，单独成段，
+        # 否则整笔钱会砸在某一天上，那天的行就虚高了。
+        if len({t.date for t in inv.trips if t.date}) > 1:
+            spanning.append(inv)
+            continue
+        groups.setdefault((inv.project, d), []).append(inv)
+
+    row = 3
+    seq = 0
+    grand = {key: 0.0 for _, key in money_cols}
+    grand_n = 0
+
+    def put(r: int, values: list) -> None:
+        for c, v in enumerate(values, 1):
+            cell = ws.cell(row=r, column=c, value=v)
+            cell.alignment = WRAP
+            if first_money <= c < total_col or c == total_col:
+                cell.number_format = "#,##0.00"
+
+    def subtotal(r: int, tag: str, sums: dict[str, float], n: int) -> None:
+        ws.cell(row=r, column=1, value=tag).font = HEAD_FONT
+        for c in range(1, ncol + 1):
+            ws.cell(row=r, column=c).fill = SUB_FILL
+            ws.cell(row=r, column=c).font = HEAD_FONT
+        for i, (_, key) in enumerate(money_cols):
+            ws.cell(row=r, column=first_money + i, value=round(sums[key], 2)) \
+                .number_format = "#,##0.00"
+        ws.cell(row=r, column=total_col, value=round(sum(sums.values()), 2)) \
+            .number_format = "#,##0.00"
+        ws.cell(row=r, column=total_col + 1, value=n)
+
+    def write_row(items: list[Invoice], day: str, extra: list[str]) -> dict[str, float]:
+        """写一行（一天 / 一张跨天票），返回该行的分类金额。"""
+        nonlocal row, seq
+        kinds = [KIND_DISPLAY.get(k, k) for k in
+                 sorted({i.kind for i in items}, key=lambda k: KIND_ORDER.get(k, 9))]
+        detail = "\n".join(detail_text(i) for i in items)
+        people = "、".join(dict.fromkeys(i.passenger for i in items if i.passenger))
+        auto = list(extra)
+        weak = {i.kind for i in items if invoice_day(i)[1]}
+        if "住宿" in weak:
+            auto.append("住宿票面无人住日期，此行按开票日期归入，请按实际入住日调整")
+        if "餐饮" in weak:
+            auto.append("餐饮票面无消费日期，按开票日期归入")
+        notes = "；".join(x for x in [_clean_notes(items), *auto] if x)
+        amount = {key: 0.0 for _, key in money_cols}
+        for i in items:
+            if i.total is not None and i.kind in KIND_ORDER:
+                amount[i.kind] += i.total
+        seq += 1
+        day_cell = None
+        if day:
+            y, m, d = (int(x) for x in day.split("-"))
+            day_cell = _dt.date(y, m, d)
+        put(row, [seq, day_cell, weekday_cn(day) if day else "", items[0].project,
+                  "+".join(kinds), detail] + [round(amount[k], 2) for _, k in money_cols]
+            + [round(sum(amount.values()), 2), len(items), people, notes])
+        if day:
+            ws.cell(row=row, column=2).number_format = "yyyy.m.d"
+        ws.row_dimensions[row].height = min(15 * (detail.count("\n") + 1) + 4, 150)
+        row += 1
+        return amount
+
+    for proj in projects:
+        p_sum = {key: 0.0 for _, key in money_cols}
+        p_n = 0
+        for day in sorted(d for p, d in groups if p == proj):
+            items = sorted(groups[(proj, day)],
+                           key=lambda i: (KIND_ORDER.get(i.kind, 9), i.invoice_no))
+            amount = write_row(items, day, [])
+            for _, key in money_cols:
+                p_sum[key] += amount[key]
+                grand[key] += amount[key]
+            p_n += len(items)
+            grand_n += len(items)
+        if len(projects) > 1:
+            subtotal(row, f"{proj} 小计", p_sum, p_n)
+            row += 1
+
+    if spanning:
+        _section_label(ws, row, ncol,
+                       "以下发票含跨天行程，金额为整票合计，无法拆到各天")
+        row += 1
+        for inv in sorted(spanning, key=lambda i: (i.project, invoice_day(i)[0])):
+            ds = sorted({t.date for t in inv.trips if t.date})
+            amount = write_row(
+                [inv], invoice_day(inv)[0],
+                [f"含 {len(ds)} 天行程（{ds[0][5:]}–{ds[-1][5:]}），金额按整票计入，未拆到各天"])
+            for _, key in money_cols:
+                grand[key] += amount[key]
+            grand_n += 1
+
+    if unknown:
+        _section_label(ws, row, ncol, "以下发票未读到日期，请人工补录")
+        row += 1
+        for inv in unknown:
+            seq += 1
+            put(row, [seq, None, "", inv.project, KIND_DISPLAY.get(inv.kind, inv.kind),
+                      detail_text(inv)]
+                + [round(inv.total or 0, 2) if inv.kind == key else None
+                   for _, key in money_cols]
+                + [round(inv.total or 0, 2), 1, inv.passenger,
+                   "；".join(x for x in ("未读到日期", _clean_notes([inv])) if x)])
+            ws.row_dimensions[row].height = 32
+            # 日期缺失的票仍计入合计：钱确实花出去了，不能因为日期不详就漏账
+            for _, key in money_cols:
+                if inv.kind == key:
+                    grand[key] += inv.total or 0
+            grand_n += 1
+            row += 1
+
+    subtotal(row, "合计", grand, grand_n)
+    ws.cell(row=row, column=total_col, value=round(sum(grand.values()), 2)) \
+        .number_format = "#,##0.00"
+
+    for i, w in enumerate([5, 11, 6, 12, 11, 56] + [10] * len(money_cols)
+                          + [11, 6, 10, 30], 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    ws.freeze_panes = "A3"
+    if row > 3:
+        ws.auto_filter.ref = f"A2:{get_column_letter(ncol)}{row}"
+
+
 # ================================================================= 确认文案
 def _describe(files: list, params: dict) -> str:
     try:
@@ -319,7 +692,8 @@ def _describe(files: list, params: dict) -> str:
     lines = [f"即将解析 {len(files)} 张发票并生成汇总 Excel："]
     for name, n in sorted(buckets.items()):
         lines.append(f"  · {name}：{n} 张")
-    lines.append("输出：一个 xlsx（发票明细 / 项目汇总 / 待确认）")
+    lines.append("「按日期」表把同一天的花费合并成一行（交通/餐饮/住宿 分列），")
+    lines.append("并附发票明细、项目汇总、待确认。")
     lines.append("解析是只读操作，不会修改发票文件。")
     return "\n".join(lines)
 
@@ -334,8 +708,10 @@ INVOICE_SUMMARY_OP = OpDef(
     confirm_builder=_describe,
     output_kind="file",
     description=(
-        "把一批发票 PDF 解析成按项目归集的 Excel：出行票自动取出发地→到达地，"
-        "住宿票取酒店名称（销售方），餐饮票取餐厅名称；同一张发票多段行程合并为一行。\n"
+        "把一批发票 PDF 整理成 Excel：首张「按日期」表把同一天的花费合并成一行"
+        "（交通/餐饮/住宿 分列 + 当日合计），出行票取出发地→到达地，"
+        "住宿票取酒店名称，餐饮票取餐厅名称。\n"
+        "另附「发票明细」（一张票一行，可溯源）、「项目汇总」和「待确认」。\n"
         "项目归属按文件夹结构判定（一个项目一个文件夹），无需给发票命名。\n"
         "只支持有文本层的电子发票 PDF；扫描件/照片不做 OCR，会列入「待确认」。\n"
         "全程只读，不修改发票文件。"
@@ -407,12 +783,19 @@ def run_invoice_summary(ctx: OpContext, files: list[str], params: dict) -> None:
     wb = Workbook()
     wb.remove(wb.active)
 
+    # 全部按「项目 → 日期 → 类别」排序：用户按时间对账，文件顺序没有意义
+    invoices.sort(key=lambda i: (i.project, invoice_day(i)[0] or "9999-99-99",
+                                 KIND_ORDER.get(i.kind, 9), i.invoice_no))
+
     def _money_cell(ws, row, col, value):
         c = ws.cell(row=row, column=col, value=value)
         c.number_format = "#,##0.00"
         return c
 
-    # ---- Sheet 1：发票明细
+    # ---- Sheet 1：按日期（主表，一行 = 某天全部花费）
+    _write_date_sheet(wb, invoices)
+
+    # ---- Sheet 2：发票明细（一张票一行，用于溯源）
     ws = wb.create_sheet("发票明细")
     ws.append(list(DET_COLS))
     for c in range(1, len(DET_COLS) + 1):
@@ -422,7 +805,7 @@ def run_invoice_summary(ctx: OpContext, files: list[str], params: dict) -> None:
         note = "；".join(inv.notes)
         ws.append([
             inv.project, inv.kind, inv.subtype,
-            inv.use_date or inv.invoice_date,
+            invoice_day(inv)[0] or inv.use_date or inv.invoice_date,
             inv.route, (inv.seller if inv.kind in ("住宿", "餐饮") else ""),
             inv.seller, inv.invoice_no,
             inv.amount, inv.tax, inv.total, inv.passenger,
@@ -458,14 +841,15 @@ def run_invoice_summary(ctx: OpContext, files: list[str], params: dict) -> None:
             for inv in items:
                 sub.append([
                     inv.project, inv.kind, inv.subtype,
-                    inv.use_date or inv.invoice_date, inv.route,
+                    invoice_day(inv)[0] or inv.use_date or inv.invoice_date,
+                    inv.route,
                     (inv.seller if inv.kind in ("住宿", "餐饮") else ""),
                     inv.seller, inv.invoice_no,
                     inv.amount, inv.tax, inv.total, inv.passenger,
                     os.path.basename(inv.path), "；".join(inv.notes),
                 ])
 
-    # ---- Sheet 2：项目汇总
+    # ---- Sheet 3：项目汇总
     ws2 = wb.create_sheet("项目汇总")
     ws2.append(list(SUM_COLS))
     for c in range(1, len(SUM_COLS) + 1):
@@ -496,7 +880,7 @@ def run_invoice_summary(ctx: OpContext, files: list[str], params: dict) -> None:
     for i, w in enumerate((14, 9, 12, 9, 12, 9, 12, 12), 1):
         ws2.column_dimensions[get_column_letter(i)].width = w
 
-    # ---- Sheet 3：待确认
+    # ---- Sheet 4：待确认
     if pending:
         ws3 = wb.create_sheet("待确认")
         ws3.append(list(PEND_COLS))
