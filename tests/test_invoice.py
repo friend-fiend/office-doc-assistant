@@ -105,6 +105,27 @@ HOTEL = [
     (130, [(30, "合    计"), (270, "¥438.68"), (370, "¥26.32")]),
     (150, [(30, "价税合计（大写）"), (140, "肆佰陆拾伍圆整"), (300, "（小写）"), (340, "¥ 465.00")]),
 ]
+# 网约车月结票：一张票 3 天 3 段，价税合计 100.00（测试按天均分与末份补分位差）
+MONTHLY = [
+    (30, [(60, "发票号码： 26327000001223907777"), (330, "电子发票（普通发票）")]),
+    (50, [(60, "开票日期： 2026年07月04日")]),
+    (70, [(20, "购"), (35, "名称：厦门市博格管理咨询有限公司"),
+          (270, "销"), (285, "名称：苏州市吉利优行电子科技有限公司")]),
+    (90, [(20, "息"), (35, "统一社会信用代码/纳税人识别号：913502036123127852"),
+          (270, "息"), (285, "统一社会信用代码/纳税人识别号：91320594MA1MFD7F31")]),
+    (110, [(30, "*交通运输服务*客运服务费"), (200, "97.087379"), (250, "1"),
+           (280, "97.09"), (330, "3%"), (370, "2.91")]),
+    (130, [(30, "合    计"), (280, "¥97.09"), (370, "¥2.91")]),
+    (150, [(20, "出行人"), (60, "有效身份证件号"), (130, "出行日期"), (180, "出发地"),
+           (300, "到达地"), (420, "等级"), (460, "交通工具类型")]),
+    (175, [(20, "林锦明"), (60, "370602********3518"), (130, "2026-06-20"),
+           (180, "宁德站"), (300, "安嘉酒店"), (420, "特价车"), (460, "出租车")]),
+    (195, [(20, "林锦明"), (60, "370602********3518"), (130, "2026-06-21"),
+           (180, "安嘉酒店"), (300, "宁德市医院"), (420, "特价车"), (460, "出租车")]),
+    (215, [(20, "林锦明"), (60, "370602********3518"), (130, "2026-06-22"),
+           (180, "宁德市医院"), (300, "宁德站"), (420, "特价车"), (460, "出租车")]),
+    (250, [(30, "价税合计（大写）"), (150, "壹佰圆整"), (300, "（小写）"), (340, "¥100.00")]),
+]
 
 
 def main() -> int:
@@ -226,7 +247,49 @@ def main() -> int:
         check("端到端：总计金额 139+19.83+465",
               abs((total_row[-1] or 0) - 623.83) < 0.01, str(total_row[-1]))
 
-        # ========== 7. 确认文案（不弹窗，直接调 builder）
+        # ========== 7. 跨天票：按天均分，总额不变
+        p_month = os.path.join(tmp, "网约车月结样例.pdf")
+        _pdf(p_month, MONTHLY)
+        r5 = parse_invoice(p_month, "月结项目")
+        assert isinstance(r5, Invoice), "月结票解析失败"
+        check("月结票：读到 3 段行程", len(r5.trips) == 3,
+              str([(t.date, t.origin, t.dest) for t in r5.trips]))
+        check("月结票：价税合计 100", r5.total == 100.0, str(r5.total))
+
+        monthly_dir = os.path.join(tmp, "月结项目")
+        os.makedirs(monthly_dir, exist_ok=True)
+        f5 = os.path.join(monthly_dir, "月结.pdf")
+        shutil.copy(p_month, f5)
+        ctx2 = make_ctx(os.path.join(tmp, "out2"))
+        ctx2.set_total(1)
+        run_invoice_summary(ctx2, [f5], {
+            "project_name": "", "project_level": "1",
+            "dedupe": True, "check_amount": True, "split_by_project": False,
+        })
+        wb2 = load_workbook(ctx2.report.outputs[0])
+        ws0b = wb2["按日期"]
+        rows_b = [[c.value for c in r] for r in ws0b.iter_rows(min_row=3)]
+        day_rows = [r for r in rows_b if hasattr(r[1], "year")]
+        check("跨天票：拆成 3 天 3 行", len(day_rows) == 3,
+              str([str(r[1])[:10] for r in day_rows]))
+        amounts = [round(r[9] or 0, 2) for r in day_rows]
+        check("跨天票：按天均分 33.33/33.33/33.34", amounts == [33.33, 33.33, 33.34], str(amounts))
+        check("跨天票：分份之和 = 票面 100", abs(sum(amounts) - 100.0) < 0.001, str(sum(amounts)))
+        check("跨天票：明细写明整票与第几份",
+              all("均分" in str(r[5]) and "整票" in str(r[5]) for r in day_rows),
+              str(day_rows[0][5]))
+        check("跨天票：每行明细只含当天的 1 段",
+              all(str(r[5]).count("→") == 1 for r in day_rows), str(day_rows[0][5]))
+        total_b = rows_b[-1]
+        check("跨天票：合计金额 100", abs((total_b[9] or 0) - 100.0) < 0.001, str(total_b[9]))
+        check("跨天票：张数按原始票计 = 1", total_b[10] == 1, str(total_b[10]))
+        check("跨天票：不再出现「含跨天行程」分段",
+              all("含跨天行程" not in str(c.value)
+                  for row in ws0b.iter_rows() for c in row), "")
+        check("跨天票：合计行备注说明分摊",
+              "均分" in str(total_b[12] if len(total_b) > 12 else ""), str(total_b))
+
+        # ========== 8. 确认文案（不弹窗，直接调 builder）
         text = op.confirm_builder([f1, f2, f3], {"project_name": "", "project_level": "1"})
         check("确认文案：列出项目与张数", "projA" in text and "1 张" in text, text[:60])
 

@@ -27,15 +27,17 @@
 
 6. 「按日期」表是主表，一行 = 某项目的某一天：同一天的所有票合进一行的
    「费用明细」多行文本，金额按 交通/餐饮/住宿 分列。
-   两类票不这么算：① 一张票含多天行程（网约车月结，实测有 10 段的）——
-   金额无法按天拆，单独成段并逐段列日期，否则整笔钱会砸在某一天上；
-   ② 日期未知的票 —— 列在表尾单独一段。都不丢，也不猜。
+   一张票含多天行程时（网约车月结，实测有 10 段），按天数均分到各天，
+   明细里注明「整票 ¥X 含 N 天，本日第 k 份」——报销表本来就是按天汇总的，
+   整笔钱砸在某一天会让那行虚高。均分只影响「按日期」表的分摊展示，
+   分份金额之和严格等于票面价税合计（末份补分位差），「发票明细」仍是一票一行。
+   日期未知的票列在表尾单独一段。都不丢，也不猜。
 """
 from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -116,6 +118,9 @@ class Invoice:
     qty: str = ""           # 票面数量（住宿票的间/晚数），读不到就留空，不猜
     trips: list[Trip] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)   # 说明（含待确认原因）
+    # 只在「按日期」表里出现：跨天票按天均分后的第 part 份（共 parts 份），
+    # 原始价税合计 orig。原始发票本身始终保留 share=None。
+    share: tuple[int, int, float] | None = None
 
     @property
     def route(self) -> str:
@@ -206,6 +211,40 @@ def invoice_day(inv: "Invoice") -> tuple[str, bool]:
     if d:
         return d, False
     return iso_date(inv.invoice_date), True
+
+
+def trip_days(inv: "Invoice") -> list[str]:
+    """这张票的行程覆盖了哪几天（升序去重）。"""
+    return sorted({t.date for t in inv.trips if t.date})
+
+
+def day_shares(inv: "Invoice") -> list["Invoice"]:
+    """把一张含多天行程的票按天均分成若干份，只供「按日期」表使用。
+
+    报销表按天汇总，一张网约车月结票（实测一张含 10 段、跨 6 天）整笔钱
+    砸在某一天会让那行虚高。这里按「天数」平分——不是按段数，因为用户
+    是按天报销的，每天一份才好对着单据核。金额末份补分位差，
+    保证各份之和严格等于票面价税合计，不多算不漏算。
+
+    非跨天票、金额未读到的票原样返回（不拆，也不猜金额）。
+    """
+    days = trip_days(inv)
+    if len(days) <= 1 or inv.total is None:
+        return [inv]
+    n = len(days)
+    each = round(inv.total / n, 2)
+    out: list[Invoice] = []
+    for i, day in enumerate(days):
+        amt = round(inv.total - each * (n - 1), 2) if i == n - 1 else each
+        out.append(replace(
+            inv,
+            total=amt,
+            use_date=day,          # 这一份就算这一天的花费，不再退回开票日期
+            trips=[t for t in inv.trips if t.date == day],
+            notes=list(inv.notes),
+            share=(i + 1, n, inv.total),
+        ))
+    return out
 
 
 # ================================================================= 项目归属
@@ -487,7 +526,12 @@ def detail_text(inv: Invoice) -> str:
         days = sorted({t.date for t in trips})
         if len(days) <= 1:
             routes = "；".join(f"{t.origin or '?'}→{t.dest or '?'}" for t in trips)
-            return f"{role}：{routes} {money}"
+            text = f"{role}：{routes} {money}"
+            if inv.share:
+                part, parts, orig = inv.share
+                text += (f"\n（整票 ¥{orig:,.2f} 含 {parts} 天行程，按天均分，"
+                         f"本日第 {part}/{parts} 份）")
+            return text
         # 一张票横跨多天（网约车月结）：逐段列日期，否则整段金额会被误读成某一天的车费
         lines = [f"{role}（{days[0][5:]}–{days[-1][5:]}，{len(trips)} 段）{money}"]
         lines += [f"  {t.date[5:]} {t.origin or '?'}→{t.dest or '?'}" for t in trips]
@@ -498,6 +542,15 @@ def detail_text(inv: Invoice) -> str:
     if inv.kind == "餐饮":
         return f"餐饮：{inv.seller or '（未读到餐厅名）'} {money}"
     return f"其他：{inv.seller or inv.subtype or '未识别'} {money}"
+
+
+def ticket_count(items: list[Invoice]) -> int:
+    """这一段里有几张原始发票。
+
+    跨天票拆成多份后会落在多行，只有第 1 份算「新的一张」，
+    否则合计张数会按天翻倍，对不上手里的单据数。
+    """
+    return sum(1 for i in items if not (i.share and i.share[0] > 1))
 
 
 def _clean_notes(items: list[Invoice]) -> str:
@@ -550,18 +603,19 @@ def _write_date_sheet(wb: Workbook, invoices: list[Invoice]) -> None:
 
     groups: dict[tuple[str, str], list[Invoice]] = {}
     unknown: list[Invoice] = []
-    spanning: list[Invoice] = []
     for inv in invoices:
-        d, _ = invoice_day(inv)
-        if not d:
+        base_day, _ = invoice_day(inv)
+        if not base_day and not trip_days(inv):
             unknown.append(inv)
             continue
-        # 一张票含跨天行程（网约车月结）：金额无法按天拆，单独成段，
-        # 否则整笔钱会砸在某一天上，那天的行就虚高了。
-        if len({t.date for t in inv.trips if t.date}) > 1:
-            spanning.append(inv)
-            continue
-        groups.setdefault((inv.project, d), []).append(inv)
+        # 一张票含多天行程（网约车月结）按天均分成多份，各归各天；
+        # 非跨天票原样返回，行为不变。
+        for part in day_shares(inv):
+            pd, _ = invoice_day(part)
+            if not pd:
+                unknown.append(inv)
+                break
+            groups.setdefault((part.project, pd), []).append(part)
 
     row = 3
     seq = 0
@@ -587,8 +641,9 @@ def _write_date_sheet(wb: Workbook, invoices: list[Invoice]) -> None:
             .number_format = "#,##0.00"
         ws.cell(row=r, column=total_col + 1, value=n)
 
-    def write_row(items: list[Invoice], day: str, extra: list[str]) -> dict[str, float]:
-        """写一行（一天 / 一张跨天票），返回该行的分类金额。"""
+    def write_row(items: list[Invoice], day: str,
+                  extra: list[str]) -> tuple[dict[str, float], int]:
+        """写一行（一天），返回该行的分类金额与折算后的发票张数。"""
         nonlocal row, seq
         kinds = [KIND_DISPLAY.get(k, k) for k in
                  sorted({i.kind for i in items}, key=lambda k: KIND_ORDER.get(k, 9))]
@@ -617,7 +672,7 @@ def _write_date_sheet(wb: Workbook, invoices: list[Invoice]) -> None:
             ws.cell(row=row, column=2).number_format = "yyyy.m.d"
         ws.row_dimensions[row].height = min(15 * (detail.count("\n") + 1) + 4, 150)
         row += 1
-        return amount
+        return amount, ticket_count(items)
 
     for proj in projects:
         p_sum = {key: 0.0 for _, key in money_cols}
@@ -625,28 +680,15 @@ def _write_date_sheet(wb: Workbook, invoices: list[Invoice]) -> None:
         for day in sorted(d for p, d in groups if p == proj):
             items = sorted(groups[(proj, day)],
                            key=lambda i: (KIND_ORDER.get(i.kind, 9), i.invoice_no))
-            amount = write_row(items, day, [])
+            amount, n = write_row(items, day, [])
             for _, key in money_cols:
                 p_sum[key] += amount[key]
                 grand[key] += amount[key]
-            p_n += len(items)
-            grand_n += len(items)
+            p_n += n
+            grand_n += n
         if len(projects) > 1:
             subtotal(row, f"{proj} 小计", p_sum, p_n)
             row += 1
-
-    if spanning:
-        _section_label(ws, row, ncol,
-                       "以下发票含跨天行程，金额为整票合计，无法拆到各天")
-        row += 1
-        for inv in sorted(spanning, key=lambda i: (i.project, invoice_day(i)[0])):
-            ds = sorted({t.date for t in inv.trips if t.date})
-            amount = write_row(
-                [inv], invoice_day(inv)[0],
-                [f"含 {len(ds)} 天行程（{ds[0][5:]}–{ds[-1][5:]}），金额按整票计入，未拆到各天"])
-            for _, key in money_cols:
-                grand[key] += amount[key]
-            grand_n += 1
 
     if unknown:
         _section_label(ws, row, ncol, "以下发票未读到日期，请人工补录")
@@ -670,6 +712,11 @@ def _write_date_sheet(wb: Workbook, invoices: list[Invoice]) -> None:
     subtotal(row, "合计", grand, grand_n)
     ws.cell(row=row, column=total_col, value=round(sum(grand.values()), 2)) \
         .number_format = "#,##0.00"
+    split = [i for i in invoices if len(trip_days(i)) > 1 and i.total is not None]
+    if split:
+        ws.cell(row=row, column=ncol,
+                value=(f"含 {len(split)} 张跨天票，金额已按天均分到各日，"
+                       f"各日金额之和 = 票面价税合计；张数按原始票据数计")).alignment = WRAP
 
     for i, w in enumerate([5, 11, 6, 12, 11, 56] + [10] * len(money_cols)
                           + [11, 6, 10, 30], 1):
@@ -693,6 +740,7 @@ def _describe(files: list, params: dict) -> str:
     for name, n in sorted(buckets.items()):
         lines.append(f"  · {name}：{n} 张")
     lines.append("「按日期」表把同一天的花费合并成一行（交通/餐饮/住宿 分列），")
+    lines.append("一张票含多天行程时（如网约车月结），金额按天数均分到各日。")
     lines.append("并附发票明细、项目汇总、待确认。")
     lines.append("解析是只读操作，不会修改发票文件。")
     return "\n".join(lines)
@@ -711,6 +759,8 @@ INVOICE_SUMMARY_OP = OpDef(
         "把一批发票 PDF 整理成 Excel：首张「按日期」表把同一天的花费合并成一行"
         "（交通/餐饮/住宿 分列 + 当日合计），出行票取出发地→到达地，"
         "住宿票取酒店名称，餐饮票取餐厅名称。\n"
+        "一张票含多天行程时（如网约车月结票），金额按天数均分到各日，"
+        "明细里注明整票金额与第几份，各日之和等于票面价税合计。\n"
         "另附「发票明细」（一张票一行，可溯源）、「项目汇总」和「待确认」。\n"
         "项目归属按文件夹结构判定（一个项目一个文件夹），无需给发票命名。\n"
         "只支持有文本层的电子发票 PDF；扫描件/照片不做 OCR，会列入「待确认」。\n"
