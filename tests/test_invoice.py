@@ -278,6 +278,9 @@ def main() -> int:
         check("跨天票：明细写明整票与第几份",
               all("均分" in str(r[5]) and "整票" in str(r[5]) for r in day_rows),
               str(day_rows[0][5]))
+        check("跨天票：备注列点名均分金额",
+              all("均分票" in str(r[12]) and "本日" in str(r[12]) for r in day_rows),
+              str(day_rows[0][12]))
         check("跨天票：每行明细只含当天的 1 段",
               all(str(r[5]).count("→") == 1 for r in day_rows), str(day_rows[0][5]))
         total_b = rows_b[-1]

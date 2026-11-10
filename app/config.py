@@ -11,7 +11,7 @@ from pathlib import Path
 APP_NAME = "办公文档一键处理助手"
 APP_NAME_EN = "OfficeDocAssistant"
 APP_ID = "OfficeDocAssistant"
-VERSION = "1.0.3"
+VERSION = "1.0.4"
 ORG_NAME = "OfficeDocAssistant"
 
 IS_WINDOWS = sys.platform.startswith("win")

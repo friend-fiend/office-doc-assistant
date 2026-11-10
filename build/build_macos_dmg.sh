@@ -29,7 +29,7 @@ PROJ="$(pwd)"
 VERSION="$(sed -n 's/^VERSION = "\(.*\)"/\1/p' build/office_doc_assistant.spec | head -1)"
 # 用 if 而不是 `[ -z ... ] && ...`：后者在"版本号读到了"时返回 1，
 # 配合 set -e 会让脚本在正常路径上直接退出。
-if [ -z "$VERSION" ]; then VERSION="1.0.3"; fi
+if [ -z "$VERSION" ]; then VERSION="1.0.4"; fi
 APP_NAME="OfficeDocAssistant"
 
 echo "==== [1/7] 环境体检 ===="

@@ -655,6 +655,15 @@ def _write_date_sheet(wb: Workbook, invoices: list[Invoice]) -> None:
             auto.append("住宿票面无人住日期，此行按开票日期归入，请按实际入住日调整")
         if "餐饮" in weak:
             auto.append("餐饮票面无消费日期，按开票日期归入")
+        # 均分票必须在备注列点名：报销单审核时一眼能看出这一行的钱不是票面全额，
+        # 否则「整票 111.75 / 当日 15.96」对不上，会被当成算错。
+        shared = [i for i in items if i.share and i.share[1] > 1]
+        if shared:
+            bits = []
+            for i in shared:
+                _, parts, orig = i.share        # 已过滤，必有值
+                bits.append(f"整票 ¥{orig:,.2f}÷{parts} 天，本日 ¥{(i.total or 0):,.2f}")
+            auto.append("均分票：" + "；".join(bits))
         notes = "；".join(x for x in [_clean_notes(items), *auto] if x)
         amount = {key: 0.0 for _, key in money_cols}
         for i in items:
@@ -719,7 +728,7 @@ def _write_date_sheet(wb: Workbook, invoices: list[Invoice]) -> None:
                        f"各日金额之和 = 票面价税合计；张数按原始票据数计")).alignment = WRAP
 
     for i, w in enumerate([5, 11, 6, 12, 11, 56] + [10] * len(money_cols)
-                          + [11, 6, 10, 30], 1):
+                          + [11, 6, 10, 38], 1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = "A3"
     if row > 3:

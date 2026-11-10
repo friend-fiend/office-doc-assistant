@@ -14,7 +14,7 @@ echo [1/6] 当前目录：%CD%
 REM 版本号单一来源：从 spec 里读 VERSION，避免 spec/iss/bat 三处硬编码走偏。
 REM findstr 按 "VERSION = " 开头定位那一行，用 = 和空格做分隔取第 2 列，
 REM %%~v 去掉引号。读不到就退回下面的默认值，不会让脚本中断。
-set "APPVER=1.0.3"
+set "APPVER=1.0.4"
 for /f "tokens=2 delims== " %%v in ('findstr /r /c:"^VERSION = " build\office_doc_assistant.spec') do set "APPVER=%%~v"
 echo     版本号：%APPVER%
 
