@@ -26,6 +26,8 @@ on:
     tags: ["v*"]
     tags-ignore: ["v*-mac*"]   # mac 专用标签交给 build-macos-dmg.yml
 
+permissions:/n  contents: write   # release 步骤需要创建 Release、上传安装包
+
 env:
   # 版本号的权威来源是 build/office_doc_assistant.spec 里的 VERSION：
   # Windows 任务会在跑 ISCC 前自动读出来并写回这里，macOS 的 DMG 脚本也自己读 spec。
