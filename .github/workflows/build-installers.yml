@@ -24,6 +24,7 @@ on:
   workflow_dispatch:
   push:
     tags: ["v*"]
+    tags-ignore: ["v*-mac*"]   # mac 专用标签交给 build-macos-dmg.yml
 
 env:
   # 版本号的权威来源是 build/office_doc_assistant.spec 里的 VERSION：
@@ -96,16 +97,17 @@ jobs:
     strategy:
       matrix:
         include:
-          - { runner: macos-14, arch: arm64 }     # Apple Silicon
-          - { runner: macos-13, arch: x86_64 }    # Intel
+          - { runner: macos-15, arch: arm64, pyarch: arm64 }   # Apple Silicon 原生
+          - { runner: macos-15, arch: x86_64, pyarch: x64 }    # Intel：Rosetta 跑 x64 Python
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: 安装 Python 3.11
+      - name: 安装 Python 3.11（Intel 包用 x64 版，经 Rosetta 运行）
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          architecture: "${{ matrix.pyarch }}"
 
       - name: 安装依赖
         run: |

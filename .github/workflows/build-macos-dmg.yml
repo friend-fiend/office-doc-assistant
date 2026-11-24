@@ -11,9 +11,10 @@
 #    OfficeDocAssistant-<v>-macOS-arm64.dmg      Apple Silicon (M1/M2/M3/M4)
 #    OfficeDocAssistant-<v>-macOS-x86_64.dmg     Intel Mac
 #
-#  构建机只用 macos-14（Apple Silicon）：
-#    * macos-13（Intel 机器）免费账户排队极久甚至卡死，不再使用；
-#    * x86_64 包在 macos-14 上用 Rosetta 跑 x64 Python 编译，
+#  构建机只用 macos-15（Apple Silicon）：
+#    * macos-13 / macos-14 镜像已于 2026 年退役（macos-14 于 11 月 2 日），
+#      用这些标签的任务会被立即取消或永远排队；
+#    * x86_64 包在 macos-15 上用 Rosetta 跑 x64 Python 编译，
 #      产物为真 Intel 二进制（PyInstaller target_arch=x86_64）。
 # =====================================================================
 name: macos-dmg
@@ -35,7 +36,7 @@ jobs:
         include:
           - { arch: arm64,  pyarch: arm64 }   # Apple Silicon：原生
           - { arch: x86_64, pyarch: x64 }     # Intel：Rosetta 跑 x64 Python
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
@@ -55,7 +56,9 @@ jobs:
           PYTHONIOENCODING: utf-8
         run: python tests/selftest.py
 
+      # Intel 包依赖 Rosetta 兼容性，失败时不阻塞 arm64 包发布
       - name: 打包 + DMG
+        continue-on-error: ${{ matrix.arch == 'x86_64' }}
         run: |
           chmod +x build/build_macos_dmg.sh
           ./build/build_macos_dmg.sh ${{ matrix.arch }}
