@@ -11,7 +11,7 @@ cd "$(dirname "$0")/.."
 # 注意用 if 而不是 `[ -z ... ] && ...`：后者在条件不成立时返回 1，
 # 配合 set -e 会让脚本在"版本号读到了"这个正常路径上直接退出。
 VERSION="$(sed -n 's/^VERSION = "\(.*\)"/\1/p' build/office_doc_assistant.spec | head -1)"
-if [ -z "$VERSION" ]; then VERSION="1.0.5"; fi
+if [ -z "$VERSION" ]; then VERSION="1.0.6"; fi
 OUT="dist/installer/OfficeDocAssistant-${VERSION}-portable-win64.zip"
 
 if [ ! -f "dist/OfficeDocAssistant/OfficeDocAssistant.exe" ]; then

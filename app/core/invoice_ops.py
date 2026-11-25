@@ -21,6 +21,10 @@
      绝不拿它冒充项目名；散在公共父目录根下的同样「未归属」。
    · 关键：用户若只选了一堆散 PDF（而不是整个项目文件夹），路径里就
      没有项目层级了，此时必须提醒他填项目名，而不是悄悄写个错的值。
+   · 「第几层」是相对 os.path.commonpath 自动收敛出的公共父目录往下数，
+     用户选的总文件夹本身不计层；单一分支的年份层也会被收敛掉。
+   · 防呆：填了 >1 层却整批判成「未归属」时，自动回退到第 1 层并提示，
+     确认弹窗与实际执行共用同一个推断结果，避免两处显示不一致。
 
 4. 一张票可以含多段行程（实测红冲网约车票 6 段）。明细行按「票」组织，
    多段行程用「；」连接写进行程列 —— 与用户现有报销表的人工习惯一致，
@@ -475,6 +479,32 @@ def assign_projects(files: list[str], explicit: str = "", level: int = 1) -> dic
     if set(out.values()) <= COST_DIRS and common_parent and not _is_noise_dir(common_parent):
         return {f: common_parent for f in files}
     return out
+
+
+def _resolve_projects(files: list[str], project_name: str,
+                      level: int) -> tuple[dict[str, str], str]:
+    """推断项目归属，并在层级填错导致整批失效时自动回退到第 1 层。
+
+    实测踩过的坑：目录其实是「总文件夹 / 项目文件夹 / 发票」，用户把
+    「项目名取第几层文件夹」填成了 2 —— 第 2 层根本不存在，48 张票全落到
+    「未归属」，三个项目被揉成一段，项目汇总只剩一行。这里在确认弹窗和
+    实际执行前统一兜底，保证两处显示一致，并明确告诉用户发生了什么。
+
+    返回 (归属表, 回退说明)。回退说明为空表示未发生回退。
+    """
+    proj = assign_projects(files, project_name, level)
+    if project_name or level <= 1 or not proj:
+        return proj, ""
+    if any(v != "未归属" for v in proj.values()):
+        return proj, ""
+    retry = assign_projects(files, "", 1)
+    names = {v for v in retry.values() if v != "未归属"}
+    if not names:
+        # 回退也无解 → 多半是散装 PDF 摊在桌面/下载/测试目录，得让用户填项目名
+        return proj, ""
+    note = (f"「项目名取第几层文件夹」设为第 {level} 层时全部无法识别，"
+            f"已自动回退到第 1 层（识别出 {len(names)} 个项目）。")
+    return retry, note
 
 
 # ================================================================= 解析
@@ -941,10 +971,13 @@ def parse_invoice(path: str, project: str) -> Invoice | Unreadable:
             inv.notes.append("未读到 20 位发票号码")
         if inv.total is None:
             inv.notes.append("未读到价税合计")
-        # 文件名带负号但票面是正数 —— 红冲票符号疑点，必须人工确认
+        # 文件名带负号但票面是正数 —— 红冲票符号疑点，必须人工确认。
+        # 注意：路程类文件名常用「--」当分隔符（如「泉州南--福州南--94」），
+        # 第二个短横线后面正好跟着金额，若不加限制会被误读成 -94 元红冲标记。
+        # 因此要求负号前面不是另一个短横线，只认独立写出的负金额。
         base = os.path.basename(path)
         if base.count("-") and inv.total is not None and inv.total > 0:
-            neg = re.search(r"-(\d+(?:\.\d+)?)", base)
+            neg = re.search(r"(?<!-)-(\d+(?:\.\d+)?)", base)
             if neg and abs(_f(neg.group(1)) or 0) == inv.total:
                 inv.notes.insert(0, f"文件名标注为 -{inv.total:.2f}（红冲？）但票面金额为正，请人工确认")
         return inv
@@ -1203,10 +1236,10 @@ def _write_date_sheet(wb: Workbook, invoices: list[Invoice]) -> None:
 # ================================================================= 确认文案
 def _describe(files: list, params: dict) -> str:
     try:
-        proj = assign_projects(files, str(params.get("project_name") or ""),
-                               int(params.get("project_level") or 1))
+        proj, fallback = _resolve_projects(files, str(params.get("project_name") or ""),
+                                           int(params.get("project_level") or 1))
     except Exception:
-        proj = {f: "?" for f in files}
+        proj, fallback = {f: "?" for f in files}, ""
     buckets: dict[str, int] = {}
     for p in proj.values():
         buckets[p] = buckets.get(p, 0) + 1
@@ -1215,6 +1248,8 @@ def _describe(files: list, params: dict) -> str:
     lines.append("项目归属（按文件夹自动判定）：")
     for name, n in sorted(buckets.items()):
         lines.append(f"  · {name}：{n} 个")
+    if fallback:
+        lines.append("⚠ " + fallback)
     if any(p in ("未归属", "?") for p in buckets):
         lines.append("⚠ 有文件没识别出项目名：如果这些票属于同一个项目，请在左侧")
         lines.append("   「项目名（可选）」里填一个名字后重新运行；或改用「添加项目文件夹」")
@@ -1258,6 +1293,11 @@ INVOICE_SUMMARY_OP = OpDef(
                     "请在这里填一个项目名；填写后所有票统一归这个项目。")),
         Param("project_level", "项目名取第几层文件夹", "choice", default="1",
               choices=(("1", "第 1 层子目录"), ("2", "第 2 层子目录")),
+              hint=("默认第 1 层：选「添加项目文件夹」后，总文件夹本身不计层，"
+                    "它下面每个子文件夹就是第 1 层，项目名取子文件夹名。\n"
+                    "只有总目录下存在多个平行分支、项目名在分支下面时才填第 2 层，"
+                    "例如 总/2025年/项目甲、总/2026年/项目乙；单一分支的年份层会被自动跳过。\n"
+                    "填错导致整批识别不出项目时，程序会自动回退到第 1 层并提示。"),
               visible_if=("project_name", ("",))),
         Param("dedupe", "按发票号码去重", "bool", default=True,
               hint="同一张发票被保存了两份时只计一次，重复的列入「待确认」。"),
@@ -1285,9 +1325,12 @@ def run_invoice_summary(ctx: OpContext, files: list[str], params: dict) -> None:
     split_by_project = bool(params.get("split_by_project"))
     use_filename_date = bool(params.get("use_filename_date", True))
 
-    projects = assign_projects(files, project_name, level)
+    projects, fallback = _resolve_projects(files, project_name, level)
     ctx.set_total(len(files))
     ctx.metric("模式", "发票整理（只读解析）")
+    if fallback:
+        ctx.log(fallback)
+        ctx.metric("层级自动回退", f"第 {level} 层 → 第 1 层")
 
     invoices: list[Invoice] = []
     attachments: list[Attachment] = []

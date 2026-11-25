@@ -26,6 +26,7 @@ from app.core.invoice_ops import (  # noqa: E402
     parse_document,
     parse_invoice,
     trip_days,
+    _resolve_projects,
 )
 from app.core.registry import OpContext  # noqa: E402
 from app.engine import TaskReport  # noqa: E402
@@ -257,6 +258,43 @@ def main() -> int:
         warn = op.confirm_builder([f5], {"project_name": "", "project_level": "1"})
         check("确认文案：未识别到项目时给出补填提示",
               "未归属" in warn and "项目名（可选）" in warn, warn[:80])
+
+        # ========== 5c. 层级填错自动回退 + 红冲误报（1.0.6）
+        p_a = os.path.join(tmp, "2026年差旅", "项目甲", "a.pdf")
+        p_b = os.path.join(tmp, "2026年差旅", "项目乙", "b.pdf")
+        two = [p_a, p_b]
+        bad_level = assign_projects(two, "", 2)
+        check("归属：层级填 2 确实会全判未归属（复现踩坑）",
+              set(bad_level.values()) == {"未归属"}, str(bad_level))
+        fixed, note = _resolve_projects(two, "", 2)
+        check("防呆：层级填错时自动回退第 1 层",
+              fixed[p_a] == "项目甲" and fixed[p_b] == "项目乙"
+              and "自动回退" in note, f"{fixed} / {note}")
+        ok_level, quiet = _resolve_projects(two, "", 1)
+        check("防呆：层级正确时不触发回退",
+              quiet == "" and ok_level[p_a] == "项目甲", quiet)
+        scattered = [os.path.join(tmp, "测试", "x.pdf")]
+        flat, flat_note = _resolve_projects(scattered, "", 2)
+        check("防呆：散装 PDF 回退也无解，仍提示补填项目名",
+              flat[scattered[0]] == "未归属" and flat_note == "",
+              f"{flat} / {flat_note}")
+        warn2 = op.confirm_builder(two, {"project_name": "", "project_level": "2"})
+        check("确认文案：显示回退后的项目并说明原因",
+              "项目甲" in warn2 and "自动回退" in warn2, warn2[:120])
+
+        # 路程分隔符「--19.83」不应被当成 -19.83 元红冲标记
+        p_dash = os.path.join(tmp, "泉州南--福州南--19.83.pdf")
+        shutil.copy(p_taxi, p_dash)
+        r_dash = parse_invoice(p_dash, "X")
+        check("红冲：路程分隔符 --19.83 不再误报",
+              not any("红冲" in n for n in getattr(r_dash, "notes", [])),
+              str(getattr(r_dash, "notes", [])))
+        p_neg = os.path.join(tmp, "票_-19.83.pdf")
+        shutil.copy(p_taxi, p_neg)
+        r_neg = parse_invoice(p_neg, "X")
+        check("红冲：独立负金额文件名仍能识别疑点",
+              any("红冲" in n for n in getattr(r_neg, "notes", [])),
+              str(getattr(r_neg, "notes", [])))
 
         # ========== 6. 端到端：去重 + 汇总表
         f4 = os.path.join(sub1, "dup.pdf"); shutil.copy(p_taxi, f4)   # 与 f2 同号码
