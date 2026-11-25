@@ -303,11 +303,29 @@ class ScrollableFrame(ttk.Frame):
         self.canvas.bind("<Enter>", lambda e: self._bind_wheel(True))
         self.canvas.bind("<Leave>", lambda e: self._bind_wheel(False))
 
+    def _sync_scrollbar(self) -> None:
+        """内容装得下就收起滚动条。
+
+        常驻的灰槽比滚动本身更碍眼 —— 参数只有两三个时它还杵在右边，
+        白白吃掉十来个像素的宽度。+2 是防抖容差，避免在临界高度反复横跳。
+        """
+        try:
+            need = self.inner.winfo_reqheight() > self.canvas.winfo_height() + 2
+        except Exception:
+            return
+        mapped = bool(self.vs.winfo_ismapped())
+        if need and not mapped:
+            self.vs.grid(row=0, column=1, sticky="ns")
+        elif not need and mapped:
+            self.vs.grid_remove()
+
     def _on_inner(self, _e=None) -> None:
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        self._sync_scrollbar()
 
     def _on_canvas(self, event) -> None:
         self.canvas.itemconfigure(self._win, width=event.width)
+        self._sync_scrollbar()
 
     def _bind_wheel(self, on: bool) -> None:
         if on:

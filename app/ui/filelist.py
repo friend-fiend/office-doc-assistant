@@ -35,17 +35,30 @@ class FileList(ttk.Frame):
     # ================================================================ 构建
     def _build(self) -> None:
         bar = ttk.Frame(self)
-        bar.pack(fill="x", pady=(0, 6))
+        bar.pack(fill="x", pady=(0, 8))
 
-        for text, cmd in (
-            ("添加文件", self.add_files),
-            ("添加文件夹", self.add_folder),
-            ("移除所选", self.remove_selected),
-            ("清空", self.clear),
-            ("上移", lambda: self.move_selected(-1)),
-            ("下移", lambda: self.move_selected(1)),
-        ):
-            ttk.Button(bar, text=text, command=cmd).pack(side="left", padx=(0, 6))
+        # 按语义分级，而不是六个一模一样的白按钮：
+        #   添加（主路径，蓝描边）｜ 排序（低权重文字）｜ 移除 / 清空（破坏性红字）
+        # 一屏里同等重量的按钮越少，眼睛越容易找到下一步该点哪儿。
+        ttk.Button(bar, text="＋ 添加文件", style="Outline.TButton",
+                   command=self.add_files).pack(side="left", padx=(0, 6))
+        # 「添加文件夹」保持白底细边（次操作），与纯文字按钮再差一档 ——
+        # 它也是「添加」，不该和「上移/下移」看起来一样重。
+        ttk.Button(bar, text="添加文件夹",
+                   command=self.add_folder).pack(side="left", padx=(0, 10))
+
+        ttk.Separator(bar, orient="vertical").pack(side="left", fill="y",
+                                                   padx=(0, 8), pady=5)
+
+        ttk.Button(bar, text="↑ 上移", style="Ghost.TButton",
+                   command=lambda: self.move_selected(-1)).pack(side="left", padx=(0, 2))
+        ttk.Button(bar, text="↓ 下移", style="Ghost.TButton",
+                   command=lambda: self.move_selected(1)).pack(side="left", padx=(0, 10))
+
+        ttk.Button(bar, text="移除所选", style="Ghost.TButton",
+                   command=self.remove_selected).pack(side="left", padx=(0, 2))
+        ttk.Button(bar, text="清空", style="Danger.TButton",
+                   command=self.clear).pack(side="left")
 
         self.count_label = ttk.Label(bar, text="共 0 个文件", style="Sub.TLabel")
         self.count_label.pack(side="right")
@@ -54,7 +67,11 @@ class FileList(ttk.Frame):
         wrap.pack(fill="both", expand=True)
 
         cols = ("idx", "name", "type", "size", "dir")
-        self.tree = ttk.Treeview(wrap, columns=cols, show="headings", selectmode="extended")
+        # height 是「最小请求高度」，不是显示行数上限：这个表格是 expand 的，
+        # 窗口高时自动长到十几行；窗口矮时它先把高度让出来，免得把底部操作栏
+        # 和日志行挤出窗口（pack 会裁剪最后装的控件，主按钮会被切掉一半）。
+        self.tree = ttk.Treeview(wrap, columns=cols, show="headings",
+                                 selectmode="extended", height=4)
         self.tree.heading("idx", text="#")
         self.tree.heading("name", text="文件名")
         self.tree.heading("type", text="类型")
@@ -75,6 +92,13 @@ class FileList(ttk.Frame):
         hs.grid(row=1, column=0, sticky="ew")
         wrap.rowconfigure(0, weight=1)
         wrap.columnconfigure(0, weight=1)
+
+        # 空列表引导：Treeview 本身没有空态，空表就是一大片白，看着像没加载出来。
+        # 用 place 叠一句提示在正中，有文件时立刻撤掉。
+        self.empty_hint = ttk.Label(
+            wrap, text="还没有文件 · 把文件拖到上方，或点「＋ 添加文件」",
+            style="CardSub.TLabel")
+        self.empty_hint.place(relx=0.5, rely=0.5, anchor="center")
 
         # 拖动排序
         self.tree.bind("<ButtonPress-1>", self._on_press)
@@ -266,6 +290,10 @@ class FileList(ttk.Frame):
                 os.path.dirname(p),
             ))
         self.count_label.configure(text=f"共 {len(self._paths)} 个文件")
+        if self._paths:
+            self.empty_hint.place_forget()
+        else:
+            self.empty_hint.place(relx=0.5, rely=0.5, anchor="center")
         if not keep_selection:
             self.tree.selection_remove(*self.tree.selection())
 

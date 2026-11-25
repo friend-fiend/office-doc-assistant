@@ -121,12 +121,23 @@ class MainWindow:
         self._ui_queue: "queue.Queue[tuple]" = queue.Queue()
 
         root.title(f"{APP_NAME} v{VERSION}")
-        root.minsize(1020, 700)
-        geom = SETTINGS.get("window_geometry") or "1180x800"
+        # 窗口按「全部区块都放得下」来定最小尺寸：之前 700 高时底部操作栏
+        # 会被 pack 裁掉（主按钮只露一条边），用户以为按钮没了。
+        root.minsize(1040, 780)
+        # 旧版本存下来的几何可能是 1180x800，直接沿用的话底部照样被裁，
+        # 所以低于新下限就丢弃、回退到默认尺寸。
+        geom = SETTINGS.get("window_geometry") or ""
         try:
-            root.geometry(geom)
+            size = geom.split("+")[0].lower()
+            w, h = (int(v) for v in size.split("x"))
+            if w < 1040 or h < 780:
+                raise ValueError("太小")
         except Exception:
-            root.geometry("1180x800")
+            geom = ""
+        try:
+            root.geometry(geom or "1200x880")
+        except Exception:
+            root.geometry("1200x880")
 
         theme.apply_theme(root)
         self.style = ttk.Style(root)
@@ -143,7 +154,7 @@ class MainWindow:
         self._build_header()
 
         body = ttk.Frame(self.root)
-        body.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+        body.pack(fill="both", expand=True, padx=(14, 14), pady=(12, 10))
 
         self.sidebar = self._build_sidebar(body)
         self.sidebar.pack(side="left", fill="y", padx=(0, 12))
@@ -158,23 +169,31 @@ class MainWindow:
 
         self.param_panel = ParamPanel(right, on_change=self._on_param_changed,
                                       get_files=self.filelist.get_files)
-        self.param_panel.configure(height=210)
+        # 185 而不是 210：省下的高度让窗口在 780 高的最小尺寸下也能完整显示
+        # 底部操作栏（参数多到放不下时，参数区内部本来就有滚动）。
+        self.param_panel.configure(height=185)
         self.param_panel.pack(fill="x", pady=(0, 8))
         self.param_panel.pack_propagate(False)
 
         self._build_actionbar(right)
         self._build_log(right)
 
+        # 首屏就要把步骤条状态摆对（否则第一格不会显示成「当前」的蓝色药丸）
+        self._update_steps()
+
     # ---------------------------------------------------------------- 步骤条
     def _build_steps(self, parent) -> None:
         row = ttk.Frame(parent)
-        row.pack(fill="x", pady=(0, 10))
+        row.pack(fill="x", pady=(2, 10))
 
+        # 步骤用「药丸」表达状态：当前=蓝底白字，完成=绿底绿字，未到=灰字。
+        # 比只改文字颜色更容易一眼扫到"我现在在哪一步"。
         self.step_labels: list[ttk.Label] = []
         for i, name in enumerate(("添加文件", "设置参数", "执行"), 1):
             if i > 1:
-                ttk.Label(row, text="→", style="Sub.TLabel").pack(side="left", padx=6)
-            chip = ttk.Label(row, text=f"{i}  {name}", style="Sub.TLabel", padding=(6, 4))
+                ttk.Label(row, text="›", style="Sub.TLabel",
+                          font=theme.ui_font(11)).pack(side="left", padx=4)
+            chip = ttk.Label(row, text=f"{i}  {name}", style="Step.TLabel")
             chip.pack(side="left")
             self.step_labels.append(chip)
 
@@ -183,33 +202,35 @@ class MainWindow:
         self.current_op_label.pack(side="right")
 
     def _update_steps(self) -> None:
-        """步骤高亮随进度走：没文件时停在「添加文件」，有文件后推进到「设置参数」。"""
+        """步骤状态随进度走：没文件时停在「添加文件」，有文件后推进到「设置参数」。"""
         has_files = bool(self.filelist and self.filelist.get_files())
         names = ("添加文件", "设置参数", "执行")
         for i, chip in enumerate(self.step_labels, 1):
             if has_files and i == 1:
-                chip.configure(text="✓  添加文件", foreground=theme.SUCCESS)
-            elif i == 2:
-                chip.configure(text=f"2  {names[1]}",
-                               foreground=theme.TEXT if has_files else theme.TEXT_SUB)
-            elif i == 3:
-                chip.configure(text=f"3  {names[2]}", foreground=theme.TEXT_SUB)
+                chip.configure(text=f"✓  {names[0]}", style="StepDone.TLabel")
+            elif (has_files and i == 2) or (not has_files and i == 1):
+                chip.configure(text=f"{i}  {names[i - 1]}", style="StepCur.TLabel")
             else:
-                chip.configure(text=f"1  {names[0]}", foreground=theme.TEXT)
+                chip.configure(text=f"{i}  {names[i - 1]}", style="Step.TLabel")
 
     # ---------------------------------------------------------------- 顶栏
     def _build_header(self) -> None:
-        bar = ttk.Frame(self.root, padding=(16, 10, 16, 8))
+        # 顶栏纯白：和下方浅灰内容区形成第一层明度差，不用分隔条也能分清
+        bar = ttk.Frame(self.root, style="Header.TFrame", padding=(18, 13, 18, 11))
         bar.pack(fill="x")
 
+        # 一道 3px 品牌色竖条代替 logo：克制、不依赖图片、跨平台一致
+        tk.Frame(bar, bg=theme.PRIMARY, width=3, height=19).pack(side="left", padx=(0, 10))
         ttk.Label(bar, text=APP_NAME, style="Title.TLabel").pack(side="left")
-        ttk.Label(bar, text=f"v{VERSION}", style="Sub.TLabel").pack(side="left", padx=(8, 0))
+        ttk.Label(bar, text=f"v{VERSION}", style="HeaderSub.TLabel").pack(side="left", padx=(8, 0))
 
         # 依赖状态收成一个小药丸：绿点 = 全部就绪，黄点 = 有缺失（点击进设置）。
         # 三个组件各自的健康详情只在日志里出现，不再常驻顶栏。
         self.dep_pill = tk.Frame(bar, bg=theme.PILL_BG)
         self.dep_pill.pack(side="left", padx=(18, 0))
-        self.dep_dot = tk.Label(self.dep_pill, text="", bg=theme.PILL_BG, width=1)
+        # 圆点用字符画：空 text 的 Label 什么都不会显示（之前三个点其实一直是空的）
+        self.dep_dot = tk.Label(self.dep_pill, text="●", bg=theme.PILL_BG,
+                                fg=theme.TEXT_SUB, font=theme.ui_font(7), width=2)
         self.dep_dot.pack(side="left", padx=(8, 0))
         self.dep_text = tk.Label(self.dep_pill, text="正在检测环境…", bg=theme.PILL_BG,
                                  fg=theme.TEXT_SUB, font=theme.ui_font(9), cursor="hand2")
@@ -217,25 +238,27 @@ class MainWindow:
         for w in (self.dep_pill, self.dep_dot, self.dep_text):
             w.bind("<Button-1>", lambda e: self._open_settings())
 
-        ttk.Button(bar, text="关于", style="Ghost.TButton",
+        ttk.Button(bar, text="关于", style="GhostHeader.TButton",
                    command=self._show_about).pack(side="right")
-        ttk.Button(bar, text="设置", style="Ghost.TButton",
-                   command=self._open_settings).pack(side="right", padx=(0, 4))
+        ttk.Button(bar, text="设置", style="GhostHeader.TButton",
+                   command=self._open_settings).pack(side="right", padx=(0, 6))
 
-        ttk.Separator(self.root).pack(fill="x")
+        # 白顶栏与灰内容区本来就有色差，这条 1px 线只是把边界收干净
+        tk.Frame(self.root, bg=theme.CARD_BORDER, height=1).pack(fill="x")
 
     # ---------------------------------------------------------------- 左导航
     def _build_sidebar(self, parent) -> ttk.Frame:
-        outer = ttk.Frame(parent, style="Card.TFrame", width=200)
+        # 侧栏极浅蓝：与白色卡片区分开，一眼知道这是「导航区」而不是「内容区」。
+        # 宽度提到 218 —— 之前 200 会把「PDF 批量打印（已隐藏）」这类长功能名截断。
+        outer = ttk.Frame(parent, style="Sidebar.TFrame", width=218)
         outer.pack_propagate(False)
 
-        canvas = tk.Canvas(outer, width=184, highlightthickness=0, bg=theme.PANEL)
-        vs = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
-        canvas.configure(yscrollcommand=vs.set)
-        canvas.pack(side="left", fill="both", expand=True)
-        vs.pack(side="right", fill="y")
+        # 不加滚动条：6 个分类 + 最多一个展开的功能列表远低于最小窗口高度，
+        # 常驻的灰槽只会变成两栏之间一条碍眼的竖线。
+        canvas = tk.Canvas(outer, width=218, highlightthickness=0, bg=theme.SIDEBAR_BG)
+        canvas.pack(fill="both", expand=True)
 
-        inner = ttk.Frame(canvas, style="Card.TFrame")
+        inner = ttk.Frame(canvas, style="Sidebar.TFrame")
         canvas.create_window((0, 0), window=inner, anchor="nw")
         inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
 
@@ -243,22 +266,28 @@ class MainWindow:
         self.cat_buttons: dict[str, ttk.Button] = {}
         self.cat_ops_frames: dict[str, ttk.Frame] = {}
 
+        ttk.Label(inner, text="功能", style="SidebarTitle.TLabel").pack(
+            anchor="w", padx=14, pady=(12, 4))
+
         for cat_key, cat_title in categories():
-            cat_btn = ttk.Button(inner, text="  " + cat_title, style="Cat.TButton",
+            cat_btn = ttk.Button(inner, text=cat_title, style="SidebarCat.TButton",
                                  command=lambda k=cat_key: self._expand_cat(k))
-            cat_btn.pack(fill="x", padx=6, pady=(3, 0))
+            cat_btn.pack(fill="x", padx=8, pady=(2, 0))
             self.cat_buttons[cat_key] = cat_btn
 
-            ops_frame = ttk.Frame(inner, style="Card.TFrame")
+            ops_frame = ttk.Frame(inner, style="Sidebar.TFrame")
             for op in ops_of(cat_key):
-                btn = ttk.Button(ops_frame, text="   " + op.title, style="Op.TButton",
+                # 导航里只放主名：像「PDF 批量打印（已隐藏 7 台虚拟打印设备，如 Fax）」
+                # 这种把运行状态写进标题的，进侧栏必然被截断，状态留给参数区说明。
+                btn = ttk.Button(ops_frame, text=op.title.split("（", 1)[0],
+                                 style="SidebarOp.TButton",
                                  command=lambda k=op.key: self._select_op(k))
-                btn.pack(fill="x", padx=(16, 6), pady=1)
+                btn.pack(fill="x", padx=(14, 8), pady=1)
                 self.op_buttons[op.key] = btn
             self.cat_ops_frames[cat_key] = ops_frame
 
         self._expanded_cat = ""
-        ttk.Frame(inner, style="Card.TFrame", height=10).pack()
+        ttk.Frame(inner, style="Sidebar.TFrame", height=10).pack()
         return outer
 
     def _expand_cat(self, cat_key: str) -> None:
@@ -267,53 +296,59 @@ class MainWindow:
             return
         for k, frame in self.cat_ops_frames.items():
             frame.pack_forget()
-            self.cat_buttons[k].configure(style="Cat.TButton")
+            self.cat_buttons[k].configure(style="SidebarCat.TButton")
         # after= 让功能列表紧跟在分类标题下方，且重复展开不错位
-        self.cat_ops_frames[cat_key].pack(fill="x", padx=6, pady=(0, 3),
+        self.cat_ops_frames[cat_key].pack(fill="x", padx=8, pady=(0, 3),
                                           after=self.cat_buttons[cat_key])
-        self.cat_buttons[cat_key].configure(style="CatSel.TButton")
+        self.cat_buttons[cat_key].configure(style="SidebarCatSel.TButton")
         self._expanded_cat = cat_key
 
     # ---------------------------------------------------------------- 拖拽区
     def _build_dropzone(self, parent) -> None:
-        self.drop_frame = tk.Frame(parent, bg=theme.PANEL, highlightthickness=1,
-                                   highlightbackground=theme.BORDER,
-                                   highlightcolor=theme.PRIMARY, height=76)
+        """拖拽区有大小两种形态。
+
+        空列表时是 92px 的引导块（浅蓝底 + 浅蓝边），告诉人「往这儿拖」；
+        一旦有文件就自动收成 38px 细条 —— 引导只在该出现的时候占地方，
+        省下的高度全给文件列表。这是「引导」与「效率」的折中，
+        比单纯砍小（丢了引导）或保持常驻（永远占一行）都更合适。
+        """
+        self._drop_h_full = 92
+        self._drop_h_slim = 38
+
+        self.drop_frame = tk.Frame(parent, bg=theme.PRIMARY_SOFT,
+                                   highlightthickness=1,
+                                   highlightbackground=theme.PRIMARY_EDGE,
+                                   highlightcolor=theme.PRIMARY,
+                                   height=self._drop_h_full)
         self.drop_frame.pack(fill="x")
         self.drop_frame.pack_propagate(False)
 
-        inner = tk.Frame(self.drop_frame, bg=theme.PANEL)
-        inner.pack(expand=True)
+        self.drop_inner = tk.Frame(self.drop_frame, bg=theme.PRIMARY_SOFT)
+        self.drop_inner.pack(expand=True)
 
-        text = ("把文件或文件夹拖到这里，或点击选择"
-                if self.dnd_available
-                else "点击这里选择文件（安装 tkinterdnd2 可支持拖拽）")
-        main_line = "+  " + text if self.dnd_available else text
+        self._drop_full_text = ("＋  把文件或文件夹拖到这里，或点击选择"
+                                if self.dnd_available
+                                else "＋  点击这里选择文件（装 tkinterdnd2 可支持拖拽）")
         self.drop_label = tk.Label(
-            inner, text=main_line,
-            bg=theme.PANEL, fg=theme.TEXT, font=theme.ui_font(11, True),
-            cursor="hand2",
+            self.drop_inner, text=self._drop_full_text,
+            bg=theme.PRIMARY_SOFT, fg=theme.PRIMARY_DARK,
+            font=theme.ui_font(12, True), cursor="hand2",
         )
         self.drop_label.pack()
         self.drop_sub = tk.Label(
-            inner, text="支持多选 · 拖入整个文件夹也可自动展开",
-            bg=theme.PANEL, fg=theme.TEXT_HINT, font=theme.ui_font(9),
+            self.drop_inner, text="支持多选 · 拖入整个文件夹会自动展开",
+            bg=theme.PRIMARY_SOFT, fg=theme.TEXT_HINT, font=theme.ui_font(9),
         )
-        self.drop_sub.pack(pady=(2, 0))
-        for w in (self.drop_frame, self.drop_label, self.drop_sub):
+        self.drop_sub.pack(pady=(4, 0))
+        for w in (self.drop_frame, self.drop_inner, self.drop_label, self.drop_sub):
             w.bind("<Button-1>", lambda e: self.filelist.add_files())
-        self.drop_label.bind("<Button-1>", lambda e: self.filelist.add_files())
-
-        # 文件计数徽标：有文件时才显示
-        self.drop_count = tk.Label(self.drop_frame, text="", bg=theme.PRIMARY_LIGHT,
-                                   fg=theme.PRIMARY_DARK, font=theme.ui_font(9, True))
-        # pack 在 _on_files_changed 里按需进行，靠右侧显示
 
         if self.dnd_available:
             try:
                 from tkinterdnd2 import DND_FILES
 
-                for widget in (self.drop_frame, self.drop_label):
+                for widget in (self.drop_frame, self.drop_inner,
+                               self.drop_label, self.drop_sub):
                     widget.drop_target_register(DND_FILES)
                     widget.dnd_bind("<<Drop>>", self._on_drop)
                     widget.dnd_bind("<<DropEnter>>", lambda e: self._drop_hover(True))
@@ -322,18 +357,28 @@ class MainWindow:
                 log.warning("拖放注册失败：%s", exc)
                 self.dnd_available = False
 
+    def _update_dropzone(self, n: int) -> None:
+        """按文件数切换拖拽区形态：有文件 → 收成细条；清空 → 展开回引导态。"""
+        if n:
+            self.drop_frame.configure(height=self._drop_h_slim)
+            self.drop_label.configure(text="＋  继续添加文件（也可以直接把文件拖进来）",
+                                      font=theme.ui_font(9), fg=theme.TEXT_SUB)
+            self.drop_sub.pack_forget()
+        else:
+            self.drop_frame.configure(height=self._drop_h_full)
+            self.drop_label.configure(text=self._drop_full_text,
+                                      font=theme.ui_font(12, True), fg=theme.PRIMARY_DARK)
+            self.drop_sub.pack(pady=(4, 0))
+
     def _drop_hover(self, on: bool) -> None:
-        bg = theme.DROPI_BG if on else theme.PANEL
-        self.drop_frame.configure(bg=bg, highlightbackground=theme.PRIMARY if on else theme.BORDER)
-        for w in (self.drop_label, self.drop_sub):
+        bg = theme.PRIMARY_HOVER if on else theme.PRIMARY_SOFT
+        self.drop_frame.configure(
+            bg=bg, highlightbackground=theme.PRIMARY if on else theme.PRIMARY_EDGE)
+        for w in (self.drop_inner, self.drop_label, self.drop_sub):
             try:
                 w.configure(bg=bg)
             except Exception:
                 pass
-        try:
-            self.drop_count.configure(bg=bg if not on else theme.DROPI_BG)
-        except Exception:
-            pass
 
     def _on_drop(self, event) -> None:
         self._drop_hover(False)
@@ -363,34 +408,37 @@ class MainWindow:
         row1 = ttk.Frame(bar)
         row1.pack(fill="x")
 
-        ttk.Label(row1, text="输出到：", style="Sub.TLabel").pack(side="left")
+        ttk.Label(row1, text="输出到", style="Sub.TLabel").pack(side="left", padx=(0, 6))
         self.out_var = tk.StringVar(value=SETTINGS.get("last_output_dir") or "")
         self.out_entry = ttk.Entry(row1, textvariable=self.out_var, width=44)
-        self.out_entry.pack(side="left", fill="x", expand=True, padx=(4, 6))
+        self.out_entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
         ttk.Button(row1, text="选择…", command=self._choose_output).pack(side="left")
         ttk.Button(row1, text="重置为源目录", style="Ghost.TButton",
                    command=lambda: self.out_var.set("")).pack(side="left", padx=(4, 0))
 
         row2 = ttk.Frame(bar)
-        row2.pack(fill="x", pady=(8, 2))
+        row2.pack(fill="x", pady=(10, 2))
 
+        # 主操作：全屏唯一实心蓝，且比其它按钮大一圈 —— 眼睛先落在这里
         self.run_btn = ttk.Button(row2, text="开始执行", style="Accent.TButton",
                                   command=self._start_task, state="disabled")
         self.run_btn.pack(side="left")
-        self.cancel_btn = ttk.Button(row2, text="取消", command=self._cancel_task,
-                                     state="disabled")
-        self.cancel_btn.pack(side="left", padx=(8, 0))
+        self.cancel_btn = ttk.Button(row2, text="取消", style="Ghost.TButton",
+                                     command=self._cancel_task, state="disabled")
+        self.cancel_btn.pack(side="left", padx=(10, 0))
 
-        self.extra_btn = ttk.Button(row2, text="预览重命名", command=self._preview_rename)
+        self.extra_btn = ttk.Button(row2, text="预览重命名", style="Outline.TButton",
+                                    command=self._preview_rename)
         # 仅在重命名功能下 pack（见 _select_op）
 
-        self.open_out_btn = ttk.Button(row2, text="打开输出文件夹",
+        # 执行完的「产出入口」用绿色描边：和主操作区分，又表示「这里是结果」
+        self.open_out_btn = ttk.Button(row2, text="打开输出文件夹", style="Success.TButton",
                                        command=self._open_last_output)
-        self.open_out_btn.pack(side="left", padx=(8, 0))
+        self.open_out_btn.pack(side="left", padx=(10, 0))
         self.open_out_btn.state(["disabled"])
 
         self.hint_label = ttk.Label(row2, text="请先选择一个功能", style="Sub.TLabel")
-        self.hint_label.pack(side="left", padx=(12, 0))
+        self.hint_label.pack(side="left", padx=(14, 0))
 
         # 进度条与状态同行：细条占满、右侧文字，少占一行高度
         prow = ttk.Frame(bar)
@@ -408,7 +456,8 @@ class MainWindow:
 
         row = ttk.Frame(parent)
         row.pack(fill="x", pady=(8, 0))
-        self.log_status_dot = tk.Label(row, text="", bg=theme.BG, fg=theme.SUCCESS, width=2)
+        self.log_status_dot = tk.Label(row, text="●", bg=theme.BG, fg=theme.SUCCESS,
+                                       font=theme.ui_font(7), width=2)
         self.log_status_dot.pack(side="left")
         self.log_status = ttk.Label(row, text="就绪。选择左侧功能开始。", style="Sub.TLabel")
         self.log_status.pack(side="left")
@@ -486,16 +535,16 @@ class MainWindow:
         known = [st for st in self._dep_status.values() if st is not None]
         if known and not missing:
             self.dep_pill.configure(bg=theme.SUCCESS_BG)
-            self.dep_dot.configure(bg=theme.SUCCESS_BG, text="", fg=theme.SUCCESS)
-            self.dep_text.configure(bg=theme.SUCCESS_BG, fg=theme.SUCCESS, text="环境正常")
+            self.dep_dot.configure(bg=theme.SUCCESS_BG, fg=theme.SUCCESS)
+            self.dep_text.configure(bg=theme.SUCCESS_BG, fg=theme.SUCCESS_DARK, text="环境正常")
         elif missing:
             self.dep_pill.configure(bg=theme.WARN_BG)
-            self.dep_dot.configure(bg=theme.WARN_BG, text="", fg=theme.WARN)
+            self.dep_dot.configure(bg=theme.WARN_BG, fg=theme.WARN)
             self.dep_text.configure(bg=theme.WARN_BG, fg=theme.WARN,
                                     text=f"{len(missing)} 个组件缺失，点击查看")
         else:
             self.dep_pill.configure(bg=theme.PILL_BG)
-            self.dep_dot.configure(bg=theme.PILL_BG, text="", fg=theme.TEXT_SUB)
+            self.dep_dot.configure(bg=theme.PILL_BG, fg=theme.TEXT_SUB)
             self.dep_text.configure(bg=theme.PILL_BG, fg=theme.TEXT_SUB, text="正在检测环境…")
         self._refresh_buttons()
         if announce:
@@ -520,7 +569,7 @@ class MainWindow:
         self.current_op_key = op_key
 
         for k, btn in self.op_buttons.items():
-            btn.configure(style="OpSel.TButton" if k == op_key else "Op.TButton")
+            btn.configure(style="SidebarOpSel.TButton" if k == op_key else "SidebarOp.TButton")
 
         # 展开该功能所在分类（手风琴联动）
         for cat_key, ops in ((c, ops_of(c)) for c, _t in categories()):
@@ -543,13 +592,8 @@ class MainWindow:
     def _on_files_changed(self) -> None:
         self.param_panel.refresh_files()
         self._refresh_buttons()
-        # 拖拽区计数徽标 + 步骤条推进
-        n = len(self.filelist.get_files())
-        if n:
-            self.drop_count.configure(text=f" 已添加 {n} 个文件 ")
-            self.drop_count.pack(side="right", padx=10)
-        else:
-            self.drop_count.pack_forget()
+        # 拖拽区按文件数收缩；计数只在文件列表右侧显示一处，不再重复标注
+        self._update_dropzone(len(self.filelist.get_files()))
         self._update_steps()
 
     @staticmethod
@@ -847,8 +891,11 @@ class MainWindow:
         if level != "debug":
             shown = text.strip().strip("= ").strip()
             if shown:
+                # 超长就截断并补省略号 —— 直接 slice 会让人以为话没说完
+                if len(shown) > 64:
+                    shown = shown[:64].rstrip() + "…"
                 color = LEVEL_COLOR.get(level, theme.TEXT_SUB)
-                self.log_status.configure(text=shown[:80], foreground=color)
+                self.log_status.configure(text=shown, foreground=color)
                 self.log_status_dot.configure(
                     fg=theme.SUCCESS if level == "success"
                     else theme.ERROR if level == "error"
