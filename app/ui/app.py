@@ -151,6 +151,7 @@ class MainWindow:
         right = ttk.Frame(body)
         right.pack(side="left", fill="both", expand=True)
 
+        self._build_steps(right)
         self._build_dropzone(right)
         self.filelist = FileList(right, on_change=self._on_files_changed)
         self.filelist.pack(fill="both", expand=True, pady=(8, 8))
@@ -164,23 +165,57 @@ class MainWindow:
         self._build_actionbar(right)
         self._build_log(right)
 
+    # ---------------------------------------------------------------- 步骤条
+    def _build_steps(self, parent) -> None:
+        row = ttk.Frame(parent)
+        row.pack(fill="x", pady=(0, 10))
+
+        self.step_labels: list[ttk.Label] = []
+        for i, name in enumerate(("添加文件", "设置参数", "执行"), 1):
+            if i > 1:
+                ttk.Label(row, text="→", style="Sub.TLabel").pack(side="left", padx=6)
+            chip = ttk.Label(row, text=f"{i}  {name}", style="Sub.TLabel", padding=(6, 4))
+            chip.pack(side="left")
+            self.step_labels.append(chip)
+
+        self.current_op_label = ttk.Label(row, text="", style="Sub.TLabel",
+                                          font=theme.ui_font(10, True))
+        self.current_op_label.pack(side="right")
+
+    def _update_steps(self) -> None:
+        """步骤高亮随进度走：没文件时停在「添加文件」，有文件后推进到「设置参数」。"""
+        has_files = bool(self.filelist and self.filelist.get_files())
+        names = ("添加文件", "设置参数", "执行")
+        for i, chip in enumerate(self.step_labels, 1):
+            if has_files and i == 1:
+                chip.configure(text="✓  添加文件", foreground=theme.SUCCESS)
+            elif i == 2:
+                chip.configure(text=f"2  {names[1]}",
+                               foreground=theme.TEXT if has_files else theme.TEXT_SUB)
+            elif i == 3:
+                chip.configure(text=f"3  {names[2]}", foreground=theme.TEXT_SUB)
+            else:
+                chip.configure(text=f"1  {names[0]}", foreground=theme.TEXT)
+
     # ---------------------------------------------------------------- 顶栏
     def _build_header(self) -> None:
-        bar = ttk.Frame(self.root, padding=(14, 10, 14, 6))
+        bar = ttk.Frame(self.root, padding=(16, 10, 16, 8))
         bar.pack(fill="x")
 
         ttk.Label(bar, text=APP_NAME, style="Title.TLabel").pack(side="left")
         ttk.Label(bar, text=f"v{VERSION}", style="Sub.TLabel").pack(side="left", padx=(8, 0))
 
-        self.dep_frame = ttk.Frame(bar)
-        self.dep_frame.pack(side="left", padx=(22, 0))
-        self.dep_labels: dict[str, ttk.Label] = {}
-        for name in ("poppler", "soffice", "ghostscript"):
-            lbl = ttk.Label(self.dep_frame, text="检测中…", style="Sub.TLabel",
-                            cursor="hand2")
-            lbl.pack(side="left", padx=(0, 14))
-            lbl.bind("<Button-1>", lambda e: self._open_settings())
-            self.dep_labels[name] = lbl
+        # 依赖状态收成一个小药丸：绿点 = 全部就绪，黄点 = 有缺失（点击进设置）。
+        # 三个组件各自的健康详情只在日志里出现，不再常驻顶栏。
+        self.dep_pill = tk.Frame(bar, bg=theme.PILL_BG)
+        self.dep_pill.pack(side="left", padx=(18, 0))
+        self.dep_dot = tk.Label(self.dep_pill, text="", bg=theme.PILL_BG, width=1)
+        self.dep_dot.pack(side="left", padx=(8, 0))
+        self.dep_text = tk.Label(self.dep_pill, text="正在检测环境…", bg=theme.PILL_BG,
+                                 fg=theme.TEXT_SUB, font=theme.ui_font(9), cursor="hand2")
+        self.dep_text.pack(side="left", padx=(4, 8))
+        for w in (self.dep_pill, self.dep_dot, self.dep_text):
+            w.bind("<Button-1>", lambda e: self._open_settings())
 
         ttk.Button(bar, text="关于", style="Ghost.TButton",
                    command=self._show_about).pack(side="right")
@@ -191,10 +226,10 @@ class MainWindow:
 
     # ---------------------------------------------------------------- 左导航
     def _build_sidebar(self, parent) -> ttk.Frame:
-        outer = ttk.Frame(parent, style="Card.TFrame", width=196)
+        outer = ttk.Frame(parent, style="Card.TFrame", width=200)
         outer.pack_propagate(False)
 
-        canvas = tk.Canvas(outer, width=180, highlightthickness=0, bg=theme.PANEL)
+        canvas = tk.Canvas(outer, width=184, highlightthickness=0, bg=theme.PANEL)
         vs = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=vs.set)
         canvas.pack(side="left", fill="both", expand=True)
@@ -205,40 +240,74 @@ class MainWindow:
         inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
 
         self.op_buttons: dict[str, ttk.Button] = {}
-
-        ttk.Label(inner, text="功能导航", style="Card.TLabel",
-                  font=theme.ui_font(11, True)).pack(anchor="w", padx=12, pady=(12, 6))
+        self.cat_buttons: dict[str, ttk.Button] = {}
+        self.cat_ops_frames: dict[str, ttk.Frame] = {}
 
         for cat_key, cat_title in categories():
-            ttk.Label(inner, text=cat_title, style="CardSub.TLabel",
-                      font=theme.ui_font(9, True)).pack(anchor="w", padx=12, pady=(10, 2))
-            for op in ops_of(cat_key):
-                btn = ttk.Button(inner, text="  " + op.title, style="Op.TButton",
-                                 command=lambda k=op.key: self._select_op(k))
-                btn.pack(fill="x", padx=6, pady=1)
-                self.op_buttons[op.key] = btn
+            cat_btn = ttk.Button(inner, text="  " + cat_title, style="Cat.TButton",
+                                 command=lambda k=cat_key: self._expand_cat(k))
+            cat_btn.pack(fill="x", padx=6, pady=(3, 0))
+            self.cat_buttons[cat_key] = cat_btn
 
+            ops_frame = ttk.Frame(inner, style="Card.TFrame")
+            for op in ops_of(cat_key):
+                btn = ttk.Button(ops_frame, text="   " + op.title, style="Op.TButton",
+                                 command=lambda k=op.key: self._select_op(k))
+                btn.pack(fill="x", padx=(16, 6), pady=1)
+                self.op_buttons[op.key] = btn
+            self.cat_ops_frames[cat_key] = ops_frame
+
+        self._expanded_cat = ""
         ttk.Frame(inner, style="Card.TFrame", height=10).pack()
         return outer
+
+    def _expand_cat(self, cat_key: str) -> None:
+        """手风琴：同一时间只展开一个分类，减少一屏信息量。"""
+        if self._expanded_cat == cat_key:
+            return
+        for k, frame in self.cat_ops_frames.items():
+            frame.pack_forget()
+            self.cat_buttons[k].configure(style="Cat.TButton")
+        # after= 让功能列表紧跟在分类标题下方，且重复展开不错位
+        self.cat_ops_frames[cat_key].pack(fill="x", padx=6, pady=(0, 3),
+                                          after=self.cat_buttons[cat_key])
+        self.cat_buttons[cat_key].configure(style="CatSel.TButton")
+        self._expanded_cat = cat_key
 
     # ---------------------------------------------------------------- 拖拽区
     def _build_dropzone(self, parent) -> None:
         self.drop_frame = tk.Frame(parent, bg=theme.PANEL, highlightthickness=1,
                                    highlightbackground=theme.BORDER,
-                                   highlightcolor=theme.PRIMARY, height=64)
+                                   highlightcolor=theme.PRIMARY, height=76)
         self.drop_frame.pack(fill="x")
         self.drop_frame.pack_propagate(False)
+
+        inner = tk.Frame(self.drop_frame, bg=theme.PANEL)
+        inner.pack(expand=True)
 
         text = ("把文件或文件夹拖到这里，或点击选择"
                 if self.dnd_available
                 else "点击这里选择文件（安装 tkinterdnd2 可支持拖拽）")
+        main_line = "+  " + text if self.dnd_available else text
         self.drop_label = tk.Label(
-            self.drop_frame, text="⬇  " + text,
-            bg=theme.PANEL, fg=theme.TEXT_SUB, font=theme.ui_font(10),
+            inner, text=main_line,
+            bg=theme.PANEL, fg=theme.TEXT, font=theme.ui_font(11, True),
             cursor="hand2",
         )
-        self.drop_label.pack(expand=True)
+        self.drop_label.pack()
+        self.drop_sub = tk.Label(
+            inner, text="支持多选 · 拖入整个文件夹也可自动展开",
+            bg=theme.PANEL, fg=theme.TEXT_HINT, font=theme.ui_font(9),
+        )
+        self.drop_sub.pack(pady=(2, 0))
+        for w in (self.drop_frame, self.drop_label, self.drop_sub):
+            w.bind("<Button-1>", lambda e: self.filelist.add_files())
         self.drop_label.bind("<Button-1>", lambda e: self.filelist.add_files())
+
+        # 文件计数徽标：有文件时才显示
+        self.drop_count = tk.Label(self.drop_frame, text="", bg=theme.PRIMARY_LIGHT,
+                                   fg=theme.PRIMARY_DARK, font=theme.ui_font(9, True))
+        # pack 在 _on_files_changed 里按需进行，靠右侧显示
 
         if self.dnd_available:
             try:
@@ -256,7 +325,15 @@ class MainWindow:
     def _drop_hover(self, on: bool) -> None:
         bg = theme.DROPI_BG if on else theme.PANEL
         self.drop_frame.configure(bg=bg, highlightbackground=theme.PRIMARY if on else theme.BORDER)
-        self.drop_label.configure(bg=bg)
+        for w in (self.drop_label, self.drop_sub):
+            try:
+                w.configure(bg=bg)
+            except Exception:
+                pass
+        try:
+            self.drop_count.configure(bg=bg if not on else theme.DROPI_BG)
+        except Exception:
+            pass
 
     def _on_drop(self, event) -> None:
         self._drop_hover(False)
@@ -281,7 +358,7 @@ class MainWindow:
     # ---------------------------------------------------------------- 操作栏
     def _build_actionbar(self, parent) -> None:
         bar = ttk.Frame(parent)
-        bar.pack(fill="x", pady=(0, 6))
+        bar.pack(fill="x", pady=(4, 6))
 
         row1 = ttk.Frame(bar)
         row1.pack(fill="x")
@@ -295,7 +372,7 @@ class MainWindow:
                    command=lambda: self.out_var.set("")).pack(side="left", padx=(4, 0))
 
         row2 = ttk.Frame(bar)
-        row2.pack(fill="x", pady=(8, 4))
+        row2.pack(fill="x", pady=(8, 2))
 
         self.run_btn = ttk.Button(row2, text="开始执行", style="Accent.TButton",
                                   command=self._start_task, state="disabled")
@@ -315,28 +392,42 @@ class MainWindow:
         self.hint_label = ttk.Label(row2, text="请先选择一个功能", style="Sub.TLabel")
         self.hint_label.pack(side="left", padx=(12, 0))
 
-        self.progress = ttk.Progressbar(bar, mode="determinate", maximum=100)
-        self.progress.pack(fill="x", pady=(6, 0))
-        self.progress_label = ttk.Label(bar, text="就绪", style="Sub.TLabel")
-        self.progress_label.pack(anchor="w", pady=(2, 0))
+        # 进度条与状态同行：细条占满、右侧文字，少占一行高度
+        prow = ttk.Frame(bar)
+        prow.pack(fill="x", pady=(6, 0))
+        self.progress = ttk.Progressbar(prow, mode="determinate", maximum=100)
+        self.progress.pack(side="left", fill="x", expand=True)
+        self.progress_label = ttk.Label(prow, text="就绪", style="Sub.TLabel")
+        self.progress_label.pack(side="left", padx=(10, 0))
 
     # ---------------------------------------------------------------- 日志区
     def _build_log(self, parent) -> None:
-        head = ttk.Frame(parent)
-        head.pack(fill="x", pady=(6, 2))
-        ttk.Label(head, text="执行日志", style="Section.TLabel").pack(side="left")
-        ttk.Button(head, text="保存日志", style="Ghost.TButton",
-                   command=self._save_log).pack(side="right")
-        ttk.Button(head, text="清空", style="Ghost.TButton",
-                   command=self._clear_log).pack(side="right", padx=(0, 4))
+        # 日志默认折叠成一行状态条 —— 专业信息不该常驻一屏。
+        # 「执行中」等关键进展由进度条与状态行承担；点「查看日志」才展开完整记录。
+        self._log_open = False
 
-        wrap = ttk.Frame(parent, style="Card.TFrame")
-        wrap.pack(fill="both", expand=True)
-        self.log_text = tk.Text(wrap, height=8, wrap="word", relief="flat",
+        row = ttk.Frame(parent)
+        row.pack(fill="x", pady=(8, 0))
+        self.log_status_dot = tk.Label(row, text="", bg=theme.BG, fg=theme.SUCCESS, width=2)
+        self.log_status_dot.pack(side="left")
+        self.log_status = ttk.Label(row, text="就绪。选择左侧功能开始。", style="Sub.TLabel")
+        self.log_status.pack(side="left")
+        ttk.Button(row, text="保存日志", style="Ghost.TButton",
+                   command=self._save_log).pack(side="right")
+        ttk.Button(row, text="清空", style="Ghost.TButton",
+                   command=self._clear_log).pack(side="right", padx=(0, 2))
+        self.log_toggle_btn = ttk.Button(row, text="查看日志 ▾", style="Ghost.TButton",
+                                         command=self._toggle_log)
+        self.log_toggle_btn.pack(side="right", padx=(0, 2))
+
+        self.log_frame = ttk.Frame(parent, style="Card.TFrame")
+        # 注意：log_frame 默认不 pack —— 折叠状态
+
+        self.log_text = tk.Text(self.log_frame, height=8, wrap="word", relief="flat",
                                 bg=theme.PANEL, fg=theme.TEXT,
                                 font=theme.mono_font(9), padx=10, pady=8,
                                 insertbackground=theme.TEXT, state="disabled")
-        vs = ttk.Scrollbar(wrap, orient="vertical", command=self.log_text.yview)
+        vs = ttk.Scrollbar(self.log_frame, orient="vertical", command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=vs.set)
         self.log_text.pack(side="left", fill="both", expand=True)
         vs.pack(side="right", fill="y")
@@ -344,6 +435,15 @@ class MainWindow:
         for level, color in LEVEL_COLOR.items():
             self.log_text.tag_configure(level, foreground=color)
         self.log_text.tag_configure("tag_bold", font=theme.mono_font(9))
+
+    def _toggle_log(self) -> None:
+        self._log_open = not self._log_open
+        if self._log_open:
+            self.log_frame.pack(fill="both", expand=True, pady=(4, 0))
+            self.log_toggle_btn.configure(text="收起日志 ▴")
+        else:
+            self.log_frame.pack_forget()
+            self.log_toggle_btn.configure(text="查看日志 ▾")
 
     def _install_shortcuts(self) -> None:
         self.root.bind("<Control-o>", lambda e: self.filelist.add_files())
@@ -355,8 +455,9 @@ class MainWindow:
     def _startup(self) -> None:
         self._log(f"{APP_NAME} 已启动。选择左侧功能 → 添加文件 → 设置参数 → 开始执行。", "info")
         if not self.dnd_available:
-            self._log("提示：当前未安装 tkinterdnd2，拖拽功能不可用（可用「添加文件」按钮代替）。"
-                      "如需拖拽：pip install tkinterdnd2", "warn")
+            self.log_status.configure(
+                text="未安装 tkinterdnd2，暂不支持拖拽，可点击拖拽区选择文件",
+                foreground=theme.WARN)
 
         # 外部依赖探测会启动子进程，放到后台线程，避免拖慢启动
         def worker():
@@ -381,36 +482,35 @@ class MainWindow:
 
     def _apply_dep_status(self, status: dict, announce: bool = False) -> None:
         self._dep_status = status or {}
-        for key, lbl in self.dep_labels.items():
-            st = self._dep_status.get(key)
-            if st is None:
-                lbl.configure(text=f"{key}：未知", foreground=theme.TEXT_SUB)
-                continue
-            if st.available:
-                ver = f" v{st.version}" if st.version else ""
-                lbl.configure(text=f"✓ {st.spec.title.split('（')[0]}{ver}",
-                              foreground=theme.SUCCESS)
-            else:
-                lbl.configure(text=f"✗ {st.spec.title.split('（')[0]} 缺失",
-                              foreground=theme.ERROR)
+        missing = [st for st in self._dep_status.values() if st and not st.available]
+        known = [st for st in self._dep_status.values() if st is not None]
+        if known and not missing:
+            self.dep_pill.configure(bg=theme.SUCCESS_BG)
+            self.dep_dot.configure(bg=theme.SUCCESS_BG, text="", fg=theme.SUCCESS)
+            self.dep_text.configure(bg=theme.SUCCESS_BG, fg=theme.SUCCESS, text="环境正常")
+        elif missing:
+            self.dep_pill.configure(bg=theme.WARN_BG)
+            self.dep_dot.configure(bg=theme.WARN_BG, text="", fg=theme.WARN)
+            self.dep_text.configure(bg=theme.WARN_BG, fg=theme.WARN,
+                                    text=f"{len(missing)} 个组件缺失，点击查看")
+        else:
+            self.dep_pill.configure(bg=theme.PILL_BG)
+            self.dep_dot.configure(bg=theme.PILL_BG, text="", fg=theme.TEXT_SUB)
+            self.dep_text.configure(bg=theme.PILL_BG, fg=theme.TEXT_SUB, text="正在检测环境…")
         self._refresh_buttons()
         if announce:
-            missing = [st for st in self._dep_status.values() if not st.available]
             if missing:
-                self._log("以下外部程序未检测到，相关功能已禁用（点击顶栏名称或「设置」可指定路径）：",
+                self._log("以下外部程序未检测到，相关功能已禁用（点击顶栏提示或「设置」可指定路径）：",
                           "warn")
                 for st in missing:
                     self._log(f"  · {st.spec.title} —— 影响：{'、'.join(st.spec.affects)}", "warn")
                     self._log(f"    {st.spec.help_text.splitlines()[0]}", "warn")
             else:
                 self._log("外部依赖检测完成，全部就绪。", "success")
-            self._style_dep_hint()
 
     def _style_dep_hint(self) -> None:
-        for key, lbl in self.dep_labels.items():
-            st = self._dep_status.get(key)
-            if st and not st.available:
-                lbl.configure(cursor="hand2")
+        # 药丸本身已是可点击入口（_build_header 里绑定了事件），无需额外处理。
+        return
 
     # ================================================================ 功能选择
     def _select_op(self, op_key: str) -> None:
@@ -422,6 +522,13 @@ class MainWindow:
         for k, btn in self.op_buttons.items():
             btn.configure(style="OpSel.TButton" if k == op_key else "Op.TButton")
 
+        # 展开该功能所在分类（手风琴联动）
+        for cat_key, ops in ((c, ops_of(c)) for c, _t in categories()):
+            if any(o.key == op_key for o in ops):
+                self._expand_cat(cat_key)
+                break
+
+        self.current_op_label.configure(text=f"当前功能：{op.title}")
         self.filelist.set_filter(op.accepts, op.accepts_label())
         self.param_panel.build(op)
 
@@ -436,6 +543,14 @@ class MainWindow:
     def _on_files_changed(self) -> None:
         self.param_panel.refresh_files()
         self._refresh_buttons()
+        # 拖拽区计数徽标 + 步骤条推进
+        n = len(self.filelist.get_files())
+        if n:
+            self.drop_count.configure(text=f" 已添加 {n} 个文件 ")
+            self.drop_count.pack(side="right", padx=10)
+        else:
+            self.drop_count.pack_forget()
+        self._update_steps()
 
     @staticmethod
     def _is_dry_run(params: dict) -> bool:
@@ -727,6 +842,17 @@ class MainWindow:
             self.log_text.configure(state="disabled")
         except Exception:
             pass
+        # 折叠状态下用户看不到日志全文，状态行承担"最后一句话"的职责。
+        # debug 级别不打扰状态行；=== 包裹的分隔行显示成简短摘要。
+        if level != "debug":
+            shown = text.strip().strip("= ").strip()
+            if shown:
+                color = LEVEL_COLOR.get(level, theme.TEXT_SUB)
+                self.log_status.configure(text=shown[:80], foreground=color)
+                self.log_status_dot.configure(
+                    fg=theme.SUCCESS if level == "success"
+                    else theme.ERROR if level == "error"
+                    else theme.WARN if level == "warn" else theme.TEXT_SUB)
 
     def _clear_log(self) -> None:
         try:

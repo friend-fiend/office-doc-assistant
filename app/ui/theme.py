@@ -17,18 +17,23 @@ from tkinter import ttk
 from ..config import IS_MACOS, IS_WINDOWS
 
 # ---------------------------------------------------------------- 调色板（浅色）
-BG = "#f5f6f8"
+BG = "#f7f8fa"
 PANEL = "#ffffff"
-BORDER = "#e3e5e9"
+BORDER = "#e8eaee"
 TEXT = "#1f2329"
 TEXT_SUB = "#6b7280"
+TEXT_HINT = "#9ca3af"
 PRIMARY = "#2563eb"
 PRIMARY_DARK = "#1d4ed8"
 PRIMARY_LIGHT = "#eaf0fe"
 SUCCESS = "#0f9d58"
+SUCCESS_BG = "#e6f4ec"
 WARN = "#d97706"
+WARN_BG = "#fdf3e3"
 ERROR = "#d93026"
 SELECT_BG = "#eaf0fe"
+PILL_BG = "#eef0f3"          # 顶栏状态药丸底色（中性）
+HOVER = "#eceef1"
 
 MONO = ("Consolas", "Menlo", "monospace")
 
@@ -94,25 +99,28 @@ def apply_theme(root: tk.Tk) -> ttk.Style:
                           ("disabled", "#f2f3f5")],
               foreground=[("disabled", "#a8adb5")])
     style.configure("Accent.TButton", background=PRIMARY, foreground="#ffffff",
-                    font=base_bold, borderwidth=0, padding=(16, 7))
+                    font=ui_font(10, True), borderwidth=0, padding=(22, 8))
     style.map("Accent.TButton",
               background=[("pressed", PRIMARY_DARK), ("active", PRIMARY_DARK),
                           ("disabled", "#b9c6e8")],
               foreground=[("disabled", "#f0f0f0")])
     style.configure("Ghost.TButton", background=BG, foreground=TEXT_SUB,
                     borderwidth=0, padding=(8, 4))
-    style.map("Ghost.TButton", background=[("active", "#e9ebef")])
+    style.map("Ghost.TButton", background=[("active", HOVER)])
 
-    # 左侧分类按钮
-    style.configure("Cat.TButton", background=BG, foreground=TEXT_SUB,
-                    font=base_bold, anchor="w", padding=(12, 8), borderwidth=0)
-    style.map("Cat.TButton", background=[("active", "#e9ebef")])
+    # 左侧分类按钮（手风琴标题）
+    style.configure("Cat.TButton", background=PANEL, foreground=TEXT,
+                    font=ui_font(10, True), anchor="w", padding=(12, 8), borderwidth=0)
+    style.map("Cat.TButton", background=[("active", HOVER)])
+    style.configure("CatSel.TButton", background=PRIMARY_LIGHT, foreground=PRIMARY_DARK,
+                    font=ui_font(10, True), anchor="w", padding=(12, 8), borderwidth=0)
+    style.map("CatSel.TButton", background=[("active", PRIMARY_LIGHT)])
     # 左侧功能按钮（选中态用 Primary 配色）
-    style.configure("Op.TButton", background=BG, foreground=TEXT,
-                    anchor="w", padding=(20, 6), borderwidth=0)
-    style.map("Op.TButton", background=[("active", "#e9ebef")])
+    style.configure("Op.TButton", background=PANEL, foreground=TEXT,
+                    anchor="w", padding=(24, 6), borderwidth=0)
+    style.map("Op.TButton", background=[("active", HOVER)])
     style.configure("OpSel.TButton", background=PRIMARY_LIGHT, foreground=PRIMARY_DARK,
-                    anchor="w", padding=(20, 6), borderwidth=0, font=base_bold)
+                    anchor="w", padding=(24, 6), borderwidth=0, font=ui_font(9, True))
     style.map("OpSel.TButton", background=[("active", PRIMARY_LIGHT)])
 
     # ---- 输入控件
