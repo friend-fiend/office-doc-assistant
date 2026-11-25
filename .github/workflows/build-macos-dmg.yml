@@ -24,7 +24,8 @@ on:
   push:
     tags: ["v*-mac*"]
 
-permissions:/n  contents: write   # release 步骤需要创建 Release、上传安装包
+permissions:
+  contents: write   # release 步骤需要创建 Release、上传安装包
 
 env:
   # 版本号的权威来源是 build/office_doc_assistant.spec 里的 VERSION，
