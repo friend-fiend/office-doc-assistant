@@ -47,7 +47,7 @@ IS_WIN = sys.platform.startswith("win")
 IS_MAC = sys.platform == "darwin"
 APP_NAME = "OfficeDocAssistant"
 DISPLAY_NAME = "办公文档一键处理助手"
-VERSION = "1.0.4"
+VERSION = "1.0.5"
 
 
 # ------------------------------------------------------------ 版本资源（自动生成）

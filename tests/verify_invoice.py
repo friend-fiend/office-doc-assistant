@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import glob
 import os
 import sys
 
@@ -17,13 +18,15 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.cancel import CancelToken  # noqa: E402
 from app.core.invoice_ops import (  # noqa: E402
     INVOICE_SUMMARY_OP,
+    Attachment,
     assign_projects,
-    parse_invoice,
+    parse_document,
 )
 from app.core.registry import OpContext  # noqa: E402
 from app.engine import TaskReport  # noqa: E402
 
-SRC = r"C:\Users\Administrator\Desktop\测试\发票测试\票据范例"
+SRC = next((a for a in sys.argv[1:] if not a.startswith("-")),
+           r"C:\Users\Administrator\Desktop\测试\发票测试\票据范例")
 
 
 class StubBus:
@@ -44,20 +47,19 @@ def make_ctx(out_dir: str) -> OpContext:
 
 
 def main() -> int:
-    files = sorted(
-        os.path.join(SRC, n) for n in os.listdir(SRC) if n.lower().endswith(".pdf")
-    )
+    files = sorted(glob.glob(os.path.join(SRC, "**", "*.pdf"), recursive=True))
     projects = assign_projects(files)
     print(f"样票 {len(files)} 张，归属示例：{sorted(set(projects.values()))}")
 
-    ok = bad = 0
+    ok = bad = atts = 0
     hit = {"号码": 0, "价税合计": 0, "类别": 0, "行程": 0, "销售方": 0, "乘车日期": 0}
     issues: list[str] = []
     for f in files:
-        r = parse_invoice(f, projects[f])
-        if isinstance(r, type(r).__mro__[0]):  # pragma: no cover
-            pass
-        from app.core.invoice_ops import Invoice, Unreadable
+        r = parse_document(f, projects[f])
+        from app.core.invoice_ops import Unreadable
+        if isinstance(r, Attachment):
+            atts += 1
+            continue
         if isinstance(r, Unreadable):
             bad += 1
             issues.append(f"[不可读] {os.path.basename(f)}：{r.reason}")
@@ -78,9 +80,9 @@ def main() -> int:
         if r.notes and any("请人工" in n or "未读" in n or "校验" in n for n in r.notes):
             issues.append(f"[注意] {os.path.basename(f)}：{'；'.join(r.notes)}")
 
-    print(f"\n解析成功 {ok} / 失败 {bad}")
+    print(f"\n解析成功 {ok} 张发票 / 附件 {atts} 份 / 失败 {bad}")
     for k, v in hit.items():
-        print(f"  {k}: {v}/{len(files)}")
+        print(f"  {k}: {v}/{ok}")
     if issues:
         print("\n需关注的票：")
         for s in issues:

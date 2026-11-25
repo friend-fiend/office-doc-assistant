@@ -13,28 +13,40 @@
    默认的 ``get_text("text")`` 顺序是内容流顺序，铁路票会碎成单字，不能用。
 
 3. 「项目归属」= 文件夹结构，不让用户命名：
-   · 用户填了项目名 → 全部归该项目；
+   · 用户填了项目名 → 全部归该项目（散装 PDF 走这条最省事）；
    · 所有文件同在一个目录 → 项目名 = 该目录名；
    · 文件分布在公共父目录的多个子目录 → 项目名 = 第 1 层子目录名；
-   · 散在公共父目录根下的 → 「未归属」，绝不猜。
+   · 子目录名只是费用类别（打的发票/住宿发票）→ 上溯一层取父目录名；
+   · 目录名是桌面/下载/测试/输出 这类无业务含义的名字 → 「未归属」，
+     绝不拿它冒充项目名；散在公共父目录根下的同样「未归属」。
+   · 关键：用户若只选了一堆散 PDF（而不是整个项目文件夹），路径里就
+     没有项目层级了，此时必须提醒他填项目名，而不是悄悄写个错的值。
 
 4. 一张票可以含多段行程（实测红冲网约车票 6 段）。明细行按「票」组织，
    多段行程用「；」连接写进行程列 —— 与用户现有报销表的人工习惯一致，
    也保证金额列按票求和不重不漏。
 
 5. 铁路票有「乘车日期」和「开票日期」两个日期，报销口径用乘车日期；
-   住宿/餐饮票面没有消费日期，只有开票日期，说明里注明。
+   住宿票的「入离日期」在备注栏（如 10-8至10-9,共1天），打车票的日期/起终点
+   在配套的行程单里 —— 这两种才是真实消费日期。实在都没有时，才退回文件名里的
+   日期并标注来源，最后才用开票日期（备注里会提示人工调整）。
 
 6. 「按日期」表是主表，一行 = 某项目的某一天：同一天的所有票合进一行的
    「费用明细」多行文本，金额按 交通/餐饮/住宿 分列。
-   一张票含多天行程时（网约车月结，实测有 10 段），按天数均分到各天，
-   明细里注明「整票 ¥X 含 N 天，本日第 k 份」——报销表本来就是按天汇总的，
-   整笔钱砸在某一天会让那行虚高。均分只影响「按日期」表的分摊展示，
-   分份金额之和严格等于票面价税合计（末份补分位差），「发票明细」仍是一票一行。
-   日期未知的票列在表尾单独一段。都不丢，也不猜。
+   一张票含多天行程时（网约车月结，实测有 10 段）按天数均分到各天；
+   多晚住宿按晚均分。明细里注明「整票 ¥X 含 N 天，本日第 k 份」——
+   报销表本来就是按天汇总的，整笔钱砸在某一天会让那行虚高。均分只影响
+   「按日期」表的分摊展示，分份金额之和严格等于票面价税合计（末份补分位差），
+   「发票明细」仍是一票一行。日期未知的票列在表尾单独一段。都不丢，也不猜。
+
+7. 行程单、酒店结账单不是发票（没有发票号码和价税合计），单独解析为「附件」：
+   按同名主干（交通-10-08-…-行程单 ↔ …-发票）优先、同金额+同目录次之，
+   挂到对应发票上补全日期/起终点/酒店品牌/入住人，并单独列一张「附件」表。
+   它们不再进「待确认」——那不是识别失败，是本来就不该按发票计。
 """
 from __future__ import annotations
 
+import datetime as _dt
 import os
 import re
 from dataclasses import dataclass, field, replace
@@ -61,6 +73,27 @@ RE_ITEM_LINE = re.compile(r"^\s*(\*\S+?\*\S+?)\s{2,}", re.M)
 RE_TAX_TOTAL = re.compile(r"[（(]小写[）)]\s*[￥¥]?\s*(-?[\d,]+(?:\.\d{1,2})?)")
 RE_MONEY = re.compile(r"[￥¥]\s*(-?[\d,]+\.\d{2})")
 RE_ID_TAXNO = re.compile(r"识别号\s*[:：]\s*([0-9A-Z]{15,20})")
+# 住宿票在「备注」栏写明入离日期，这是票面上唯一的真实消费日期：
+#   入离日期:10-8至10-9,共1天,共1间,订单姓名:郑向荣
+RE_STAY_RANGE = re.compile(
+    r"入离日期\s*[:：]\s*(?:(\d{4})\s*[-年]\s*)?(\d{1,2})\s*[-月]\s*(\d{1,2})\s*日?"
+    r"\s*至\s*(?:(\d{4})\s*[-年]\s*)?(\d{1,2})\s*[-月]\s*(\d{1,2})\s*日?")
+RE_STAY_ROOMS = re.compile(r"共\s*(\d+)\s*间")
+RE_STAY_GUEST = re.compile(r"订单姓名\s*[:：]\s*([\u4e00-\u9fa5]{2,4})")
+# 行程单：'· 行程起止日期：2026-10-08 至 2026-10-08'
+RE_TRIP_RANGE = re.compile(
+    r"行程起止日期\s*[:：]\s*(\d{4}-\d{2}-\d{2})\s*至\s*(\d{4}-\d{2}-\d{2})")
+RE_TRIP_TOTAL = re.compile(r"合计\s*([\d,]+(?:\.\d{1,2})?)\s*元")
+RE_TRIP_TIME = re.compile(r"(?:(\d{4})-)?(\d{1,2})-(\d{1,2})\s+\d{1,2}:\d{2}")
+# 结账单
+RE_FOLIO_IN = re.compile(r"入住日期\s*[:：]\s*(\d{4}-\d{2}-\d{2})")
+RE_FOLIO_OUT = re.compile(r"离店日期\s*[:：]\s*(\d{4}-\d{2}-\d{2})")
+RE_FOLIO_TOTAL = re.compile(r"消费合计\s*([\d,]+\.\d{1,2})")
+# 文件名里的日期（交通-10-08-… / 住宿-10-08-…），仅在没有票面日期时兜底
+RE_FILE_DATE = re.compile(
+    r"(?:住宿|交通|打的|打车|动车|餐饮|出租车)[-_ ]?(?:20\d{2}[-_.年])?"
+    r"(\d{1,2})[-_.月](\d{1,2})")
+
 # 注意 lookahead 用 re.M 的 $ 而不是 \Z：公司名常在行尾，后面是 \n+下一行
 # 的非空白字符，\s{2,} 和 \Z 都不成立，会导致第二个名称整体匹配失败。
 RE_NAME = re.compile(r"名称\s*[:：]\s*(.+?)(?=\s{2,}|$)", re.M)
@@ -118,6 +151,12 @@ class Invoice:
     qty: str = ""           # 票面数量（住宿票的间/晚数），读不到就留空，不猜
     trips: list[Trip] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)   # 说明（含待确认原因）
+    # 住宿票的入住日与晚数（来自票面备注或结账单）。跨晚住宿按晚均分到「按日期」。
+    stay_from: str = ""
+    stay_nights: int = 0
+    # 结账单上的酒店品牌（如「星程南昌新建吾悦广场酒店」）；
+    # 发票销售方是开票主体（如「南昌百业酒店管理有限公司」），报销时品牌更好认。
+    brand: str = ""
     # 只在「按日期」表里出现：跨天票按天均分后的第 part 份（共 parts 份），
     # 原始价税合计 orig。原始发票本身始终保留 share=None。
     share: tuple[int, int, float] | None = None
@@ -145,6 +184,29 @@ class Unreadable:
     project: str
     reason: str
     seen: str = ""
+
+
+@dataclass
+class Attachment:
+    """发票的配套单据：网约车行程单、酒店结账单。
+
+    它们不是发票（没有发票号码、没有价税合计），以前会被当成「读不出的发票」
+    塞进待确认，既制造噪音，又浪费了票面上唯一可靠的消费日期与起终点。
+    现在单独解析，按「同名文件 → 同金额+同目录」匹配到发票，用于补全
+    日期 / 起终点 / 酒店品牌 / 入住人。
+    """
+    path: str
+    project: str
+    kind: str                      # 行程单 / 结账单
+    total: float | None = None
+    dates: list[str] = field(default_factory=list)
+    trips: list[Trip] = field(default_factory=list)
+    hotel: str = ""
+    guest: str = ""
+    stay_from: str = ""
+    stay_nights: int = 0
+    matched: str = ""              # 匹配到的发票文件名
+    note: str = ""
 
 
 def _f(s: str | None) -> float | None:
@@ -193,12 +255,91 @@ def iso_date(raw: str) -> str:
 
 def weekday_cn(iso: str) -> str:
     """2026-06-10 → 周三。"""
-    import datetime as _dt
     try:
         y, m, d = (int(x) for x in iso.split("-"))
         return WEEKDAYS[_dt.date(y, m, d).weekday()]
     except (ValueError, TypeError, IndexError):
         return ""
+
+
+def add_days(iso: str, n: int) -> str:
+    """2026-10-08 + 1 → 2026-10-09。"""
+    try:
+        y, m, d = (int(x) for x in iso.split("-"))
+        return (_dt.date(y, m, d) + _dt.timedelta(days=n)).isoformat()
+    except (ValueError, TypeError, IndexError):
+        return ""
+
+
+def _stay_dates(text: str, inv: "Invoice") -> None:
+    """住宿票备注栏的「入离日期:10-8至10-9,共1天」是票面唯一的真实住店日期。
+
+    只写月日时年份取开票年份；跨年（12 月住、1 月开票）时离店日进下一年。
+    """
+    m = RE_STAY_RANGE.search(text)
+    if not m:
+        return
+    ref = iso_date(inv.invoice_date)
+    base_year = int(ref[:4]) if ref else _dt.date.today().year
+    y1 = int(m.group(1)) if m.group(1) else base_year
+    y2 = int(m.group(4)) if m.group(4) else y1
+    mo1, d1 = int(m.group(2)), int(m.group(3))
+    mo2, d2 = int(m.group(5)), int(m.group(6))
+    try:
+        start = _dt.date(y1, mo1, d1)
+        if y2 == y1 and mo2 < mo1 - 6:
+            y2 += 1
+        end = _dt.date(y2, mo2, d2)
+    except ValueError:
+        return
+    nights = (end - start).days
+    if nights <= 0:
+        nights = 1
+    inv.stay_from = start.isoformat()
+    inv.stay_nights = nights
+    if not iso_date(inv.use_date):
+        inv.use_date = inv.stay_from
+    if not inv.qty:
+        inv.qty = str(nights)
+    inv.notes.append(
+        f"入住 {start:%m-%d} 至 {end:%m-%d}，共 {nights} 晚（取自票面备注）")
+
+
+def apply_filename_date(inv: "Invoice") -> None:
+    """票面实在没有消费日期时，用文件名里的日期兜底，并在说明里写明来源。
+
+    只认「住宿-10-08-…」这种带业务前缀的命名，避免把发票号码、开票日期
+    里的数字误当消费日期。优先级低于票面/行程单/结账单。
+    """
+    if iso_date(inv.use_date):
+        return
+    m = RE_FILE_DATE.search(os.path.basename(inv.path))
+    if not m:
+        return
+    mo, d = int(m.group(1)), int(m.group(2))
+    if not (1 <= mo <= 12 and 1 <= d <= 31):
+        return
+    ref = iso_date(inv.invoice_date)
+    year = int(ref[:4]) if ref else _dt.date.today().year
+    # 1 月开票、12 月消费 → 消费在上一年
+    if ref and mo > int(ref[5:7]) + 2:
+        year -= 1
+    try:
+        day = _dt.date(year, mo, d).isoformat()
+    except ValueError:
+        return
+    inv.use_date = day
+    inv.notes.append("日期取自文件名（票面未印消费日期），请核对")
+
+
+def sync_use_date(inv: "Invoice") -> None:
+    """把补全后的行程/住店日期同步成这张票的消费日期。"""
+    if inv.kind == "住宿" and inv.stay_from:
+        inv.use_date = inv.stay_from
+        return
+    days = [t.date for t in inv.trips if t.date]
+    if days:
+        inv.use_date = min(days)
 
 
 def invoice_day(inv: "Invoice") -> tuple[str, bool]:
@@ -214,7 +355,14 @@ def invoice_day(inv: "Invoice") -> tuple[str, bool]:
 
 
 def trip_days(inv: "Invoice") -> list[str]:
-    """这张票的行程覆盖了哪几天（升序去重）。"""
+    """这张票的行程覆盖了哪几天（升序去重）。
+
+    住宿票按「晚」算：10-20 入住、10-23 离店 = 住 3 晚（20/21/22），
+    费用按晚均分，而不是把 3 晚房费全压在入住当天。
+    """
+    if inv.kind == "住宿" and inv.stay_from and inv.stay_nights > 1:
+        return [d for d in (add_days(inv.stay_from, i)
+                            for i in range(inv.stay_nights)) if d]
     return sorted({t.date for t in inv.trips if t.date})
 
 
@@ -225,6 +373,8 @@ def day_shares(inv: "Invoice") -> list["Invoice"]:
     砸在某一天会让那行虚高。这里按「天数」平分——不是按段数，因为用户
     是按天报销的，每天一份才好对着单据核。金额末份补分位差，
     保证各份之和严格等于票面价税合计，不多算不漏算。
+
+    住宿票同理，按「晚」平分多晚房费；单晚不拆。
 
     非跨天票、金额未读到的票原样返回（不拆，也不猜金额）。
     """
@@ -248,6 +398,53 @@ def day_shares(inv: "Invoice") -> list["Invoice"]:
 
 
 # ================================================================= 项目归属
+# 常见「按费用类别分文件夹」的目录名。若第 1 层全是这类名字，说明它们不是项目，
+# 真正的项目是它们的父文件夹（如「洪盾 10 月报销」），否则项目汇总会被拆成
+# 「住宿发票 / 动车票 / 打的发票」三行，没法按项目对账。
+COST_DIRS = frozenset({
+    "住宿", "住宿发票", "住宿费", "酒店", "酒店发票",
+    "交通", "交通费", "交通发票", "打车", "打的", "打的发票", "出租车",
+    "动车", "动车票", "火车", "火车票", "高铁", "高铁票", "机票",
+    "餐饮", "餐费", "餐饮发票", "发票", "票据", "其他",
+})
+
+# 明显不是项目名的目录。散装 PDF 常常就摊在桌面/下载/测试/输出目录里，
+# 拿它当项目名会写出「测试」「输出_3」这种没有业务含义的值 —— 宁可标
+# 「未归属」并在确认弹窗里提醒用户填，也不悄悄编一个名字。
+_NOISE_DIR_EXACT = frozenset({
+    "desktop", "桌面", "downloads", "下载", "documents", "文档",
+    "pictures", "图片", "temp", "tmp", "test", "测试",
+    "新建文件夹", "newfolder", "未命名文件夹", "untitledfolder",
+    "发票", "票据", "报销", "报销单", "报销凭证", "扫描件",
+})
+_NOISE_DIR_PATTERN = re.compile(
+    r"^(?:输出|output|导出|export|发票整理成表格)(?:输出)?\d*$"
+    r"|^(?:temp|tmp|test|测试|新建文件夹)\d*$",
+    re.I,
+)
+
+
+def _is_noise_dir(name: str) -> bool:
+    """目录名是否属于「系统/临时/输出」这类不能当项目名的名字。"""
+    n = re.sub(r"[\s_\-]", "", name).lower()
+    if not n or n in _NOISE_DIR_EXACT:
+        return True
+    return bool(_NOISE_DIR_PATTERN.fullmatch(n)) or bool(
+        re.fullmatch(r"tmp[a-z0-9]{6,}", n))  # tempfile.mkdtemp 之类
+
+
+def _clean_project_name(name: str, parent: str) -> str:
+    """把目录名洗成可用的项目名；不可信的一律「未归属」，不猜。"""
+    if not name:
+        return "未归属"
+    if name in COST_DIRS:
+        # 「打的发票 / 住宿发票」只是费用分类，往上取一层才是项目。
+        return parent if parent and not _is_noise_dir(parent) else "未归属"
+    if _is_noise_dir(name):
+        return "未归属"
+    return name
+
+
 def assign_projects(files: list[str], explicit: str = "", level: int = 1) -> dict[str, str]:
     """把每个文件归到一个项目。规则见模块 docstring 第 3 条。"""
     if explicit:
@@ -255,16 +452,28 @@ def assign_projects(files: list[str], explicit: str = "", level: int = 1) -> dic
     dirs = [os.path.dirname(os.path.abspath(f)) for f in files]
     out: dict[str, str] = {}
     if len(set(dirs)) == 1:
-        name = os.path.basename(dirs[0].rstrip("\\/")) or "未归属"
-        return {f: name for f in files}
+        d = dirs[0].rstrip("\\/")
+        name = os.path.basename(d)
+        parent = os.path.basename(os.path.dirname(d).rstrip("\\/"))
+        p = _clean_project_name(name, parent)
+        return {f: p for f in files}
     try:
         common = os.path.commonpath(dirs)
     except ValueError:  # 不同盘符
         return {f: "未归属" for f in files}
+    common_parent = os.path.basename(common.rstrip("\\/"))
     for f, d in zip(files, dirs):
         rel = os.path.relpath(d, common)
         parts = [] if rel == "." else rel.split(os.sep)
-        out[f] = parts[level - 1] if len(parts) >= level else "未归属"
+        if len(parts) < level:
+            out[f] = "未归属"          # 散在公共父目录根下，绝不猜
+            continue
+        name = parts[level - 1]
+        parent = parts[level - 2] if level >= 2 else common_parent
+        out[f] = _clean_project_name(name, parent)
+    # 兼容：若整批推断出来仍全是费用类别，统一降级取公共父目录名。
+    if set(out.values()) <= COST_DIRS and common_parent and not _is_noise_dir(common_parent):
+        return {f: common_parent for f in files}
     return out
 
 
@@ -419,6 +628,246 @@ def _trip_rows_text(text: str, inv: Invoice) -> None:
         inv.use_date = inv.trips[0].date
 
 
+# ================================================================= 附件（行程单 / 结账单）
+def _is_invoice_text(text: str) -> bool:
+    """票面是否是一张发票：有发票号码，或铁路电子客票。"""
+    return bool(RE_INVOICE_NO.search(text)) or "铁路电子客票" in text
+
+
+def _is_trip_receipt(text: str) -> bool:
+    """网约车行程单：标题可能折行，认「行程起止日期」或表格列名更稳。"""
+    return ("行程起止日期" in text
+            or ("上车时间" in text and "起点" in text and "终点" in text)
+            or "行程单" in text)
+
+
+def _is_folio(text: str) -> bool:
+    """酒店结账单：有入住/离店日期与消费合计。"""
+    return (("入住日期" in text and "离店日期" in text)
+            or ("结账单" in text and "消费合计" in text))
+
+
+def _receipt_trips(page, year: int) -> list[Trip]:
+    """从行程单表格里抽起终点。
+
+    行程单的地址列会折行（实测「南昌西站-南广场-…上车点」跨两行），
+    所以按 y 聚类成行、按表头列中心分列，续行并回上一段行程——
+    和发票里的出行信息表同一套做法。
+    """
+    try:
+        words = page.get_text("words")
+    except Exception:
+        return []
+    heads = {}
+    for w in words:
+        if w[4] in ("城市", "起点", "终点", "里程", "上车时间"):
+            heads.setdefault(w[4], w)
+    if "起点" not in heads or "终点" not in heads:
+        return []
+
+    def cx(w):
+        return (w[0] + w[2]) / 2
+
+    xo, xd = cx(heads["起点"]), cx(heads["终点"])
+    b_meta = (cx(heads["城市"]) + xo) / 2 if "城市" in heads else xo - 40
+    b_dest = (xo + xd) / 2
+    b_after = (xd + cx(heads["里程"])) / 2 if "里程" in heads else xd + 40
+    top = max(heads["起点"][3], heads["终点"][3])
+
+    rows: list[dict] = []
+    for w in sorted(words, key=lambda w: (w[1], w[0])):
+        cy = (w[1] + w[3]) / 2
+        if cy <= top:
+            continue
+        if "页码" in w[4]:
+            break
+        if rows and abs(cy - rows[-1]["y"]) <= 5:
+            rows[-1]["ws"].append(w)
+            rows[-1]["y"] = (rows[-1]["y"] + cy) / 2
+        else:
+            rows.append({"y": cy, "ws": [w]})
+
+    trips: list[Trip] = []
+    cur: Trip | None = None
+    for row in rows:
+        line = " ".join(w[4] for w in sorted(row["ws"], key=lambda w: w[0]))
+        m = RE_TRIP_TIME.search(line)
+        origin, dest = [], []
+        for w in row["ws"]:
+            c = cx(w)
+            if c < b_meta:
+                continue
+            if c < b_dest:
+                origin.append(w)
+            elif c < b_after:
+                dest.append(w)
+        if m:
+            mo, dd = int(m.group(2)), int(m.group(3))
+            try:
+                day = _dt.date(int(m.group(1)) if m.group(1) else year, mo, dd).isoformat()
+            except ValueError:
+                day = ""
+            cur = Trip(date=day, origin=_join_cell(origin), dest=_join_cell(dest))
+            trips.append(cur)
+        elif cur is not None:
+            cur.origin += _join_cell(origin)
+            cur.dest += _join_cell(dest)
+    return [t for t in trips if t.origin or t.dest]
+
+
+def _parse_trip_receipt(path: str, project: str, page, text: str) -> Attachment:
+    att = Attachment(path=path, project=project, kind="行程单")
+    m = RE_TRIP_RANGE.search(text)
+    year_m = re.search(r"申请日期\s*[:：]\s*(\d{4})", text)
+    year = int(year_m.group(1)) if year_m else _dt.date.today().year
+    if m:
+        year = int(m.group(1)[:4])
+    tm = RE_TRIP_TOTAL.search(text)
+    if tm:
+        att.total = _f(tm.group(1))
+    att.trips = _receipt_trips(page, year)
+    dates = sorted({t.date for t in att.trips if t.date})
+    if not dates and m:
+        start, end = m.group(1), m.group(2)
+        try:
+            a = _dt.date.fromisoformat(start)
+            b = _dt.date.fromisoformat(end)
+            if 0 <= (b - a).days <= 62:
+                dates = [(a + _dt.timedelta(days=i)).isoformat()
+                         for i in range((b - a).days + 1)]
+        except ValueError:
+            pass
+    att.dates = dates
+    return att
+
+
+def _parse_folio(path: str, project: str, text: str) -> Attachment:
+    att = Attachment(path=path, project=project, kind="结账单")
+    tm = RE_FOLIO_TOTAL.search(text)
+    if tm:
+        att.total = _f(tm.group(1))
+    im, om = RE_FOLIO_IN.search(text), RE_FOLIO_OUT.search(text)
+    if im:
+        att.stay_from = im.group(1)
+        att.dates = [att.stay_from]
+        if om:
+            try:
+                nights = (_dt.date.fromisoformat(om.group(1))
+                          - _dt.date.fromisoformat(im.group(1))).days
+                att.stay_nights = max(1, nights)
+            except ValueError:
+                att.stay_nights = 1
+        else:
+            att.stay_nights = 1
+    for line in text.splitlines():
+        s = line.strip()
+        if s and "结账单" not in s:
+            att.hotel = s
+            break
+    gm = re.search(r"客人姓名\s*[:：]\s*([\u4e00-\u9fa5]{2,4})", text)
+    if gm:
+        att.guest = gm.group(1)
+    return att
+
+
+def parse_document(path: str, project: str) -> "Invoice | Attachment | Unreadable":
+    """先判断这份 PDF 是什么，再交给对应解析器。
+
+    发票 → Invoice；行程单/结账单 → Attachment；读不了或不是这三类 → Unreadable。
+    """
+    try:
+        import pymupdf
+    except ImportError:
+        return Unreadable(path, project, "PyMuPDF 不可用")
+    try:
+        doc = pymupdf.open(path)
+    except Exception as exc:
+        return Unreadable(path, project, f"无法打开：{exc}")
+    try:
+        page = doc[0]
+        text = page.get_text("text", sort=True)
+        if not text.strip():
+            return Unreadable(path, project, "PDF 无文本层（可能是扫描件），本功能不做 OCR")
+        if _is_invoice_text(text):
+            return parse_invoice(path, project)
+        if _is_trip_receipt(text):
+            return _parse_trip_receipt(path, project, page, text)
+        if _is_folio(text):
+            return _parse_folio(path, project, text)
+        return Unreadable(path, project,
+                          "不是发票：未读到发票号码/价税合计，也不像行程单或结账单")
+    finally:
+        doc.close()
+
+
+def _stem_key(path: str) -> str:
+    """去掉 发票/行程单/结账单(-1) 后缀，得到配对用的文件名主干。"""
+    s = os.path.splitext(os.path.basename(path))[0]
+    return re.sub(r"[-_ ]?(?:发票|行程单|结账单|账单)(?:[-_ ]?\d+)?$", "", s).strip()
+
+
+def link_attachments(invoices: list[Invoice], attachments: list[Attachment]) -> None:
+    """把附件挂到对应发票上，补全票面缺失的日期/起终点/酒店/入住人。
+
+    匹配顺序：同名主干（交通-10-08-…-行程单 ↔ 交通-10-08-…-发票）
+    → 同目录 + 同金额 + 同类别。同名优先，因为同一天可能有两张同金额的的士票。
+    """
+    by_stem = {_stem_key(i.path): i for i in invoices}
+    for att in attachments:
+        inv = by_stem.get(_stem_key(att.path))
+        if inv is not None and inv.project != att.project:
+            inv = None
+        if inv is None:
+            def _cands(same_dir: bool):
+                return [i for i in invoices
+                        if i.total is not None and att.total is not None
+                        and abs(i.total - att.total) < 0.011
+                        and i.project == att.project
+                        and (not same_dir or os.path.dirname(i.path) == os.path.dirname(att.path))
+                        and ((att.kind == "行程单" and i.kind == "出行")
+                             or (att.kind == "结账单" and i.kind == "住宿"))]
+            cands = _cands(True) or _cands(False)
+            if len(cands) == 1:
+                inv = cands[0]
+            elif len(cands) > 1:
+                att.note = "同金额发票有多张，无法确定对应关系，请人工核对"
+                continue
+
+        if inv is None:
+            att.note = "未匹配到发票（同名或同金额+同目录均未命中）"
+            continue
+
+        att.matched = os.path.basename(inv.path)
+        if att.kind == "行程单":
+            if att.trips:
+                known = {(t.date, t.origin, t.dest) for t in inv.trips}
+                for t in att.trips:
+                    if (t.date, t.origin, t.dest) not in known:
+                        inv.trips.append(t)
+                        known.add((t.date, t.origin, t.dest))
+                inv.trips.sort(key=lambda t: (t.date, t.origin))
+            if att.dates:
+                days = att.dates + ([inv.use_date] if iso_date(inv.use_date) else [])
+                inv.use_date = min(days)
+            if att.trips or att.dates:
+                inv.notes.append("日期/起终点取自行程单")
+        else:
+            used = False
+            if att.stay_from and not inv.stay_from:
+                inv.stay_from = att.stay_from
+                inv.stay_nights = att.stay_nights
+                used = True
+            if att.stay_from and not iso_date(inv.use_date):
+                inv.use_date = att.stay_from
+                used = True
+            if att.hotel and not inv.brand:
+                inv.brand = att.hotel
+            if att.guest and not inv.passenger:
+                inv.passenger = att.guest
+            if used:
+                inv.notes.append("入住日期取自结账单")
+
+
 def _general_ticket(page, text: str, inv: Invoice) -> None:
     """数电普票/专票：的士、住宿、餐饮（铁路票走 _rail_ticket）。"""
     item = RE_ITEM_LINE.search(text)
@@ -434,10 +883,13 @@ def _general_ticket(page, text: str, inv: Invoice) -> None:
         inv.notes.append(f"未识别的项目名称：{item_name or '（空）'}，请人工确认")
 
     _seller_and_buyer(text, inv)
-    if inv.kind == "住宿" and inv.seller:
-        inv.notes.append(f"酒店名取自销售方：{inv.seller}")
+    if inv.kind == "住宿":
+        _stay_dates(text, inv)
+        if inv.seller:
+            inv.notes.append(f"酒店名取自销售方：{inv.seller}")
         inv.subtype = "酒店"
-        inv.qty = _lodging_qty(text)
+        if not inv.qty:
+            inv.qty = _lodging_qty(text)
 
     # 行 1：金额行（项目行里的 金额/税率/税额；合计行兜底）
     amounts = re.findall(r"[¥￥]\s*(-?[\d,]+\.\d{2})", text)
@@ -471,6 +923,9 @@ def parse_invoice(path: str, project: str) -> Invoice | Unreadable:
         text = page.get_text("text", sort=True)
         if not text.strip():
             return Unreadable(path, project, "PDF 无文本层（可能是扫描件），本功能不做 OCR")
+        if not _is_invoice_text(text):
+            return Unreadable(path, project,
+                              "不是发票：未读到发票号码/价税合计（行程单、结账单会单独归入附件）")
         inv = Invoice(path=path, project=project)
         m = RE_INVOICE_NO.search(text) or RE_INVOICE_NO_BARE.search(text)
         inv.invoice_no = m.group(1) if m else ""
@@ -502,7 +957,8 @@ KIND_DISPLAY = {"出行": "交通", "餐饮": "餐饮", "住宿": "住宿", "其
 KIND_ORDER = {"出行": 0, "餐饮": 1, "住宿": 2, "其他": 3}
 # 这些是「解析过程说明」，属于审计信息，只该出现在「发票明细」的说明列。
 # 「按日期」是给人照着抄报销单的，备注列只留真正需要人动手的事。
-NOISE_NOTES = ("酒店名取自销售方", "铁路票票面无税额列", "进项税额按 9%", "税号 ", "销售方税号")
+NOISE_NOTES = ("酒店名取自销售方", "铁路票票面无税额列", "进项税额按 9%", "税号 ", "销售方税号",
+               "日期/起终点取自行程单", "入住日期取自结账单")
 
 
 def detail_text(inv: Invoice) -> str:
@@ -538,7 +994,13 @@ def detail_text(inv: Invoice) -> str:
         return "\n".join(lines)
     if inv.kind == "住宿":
         qty = f"（票面数量 {inv.qty}）" if inv.qty else ""
-        return f"住宿：{inv.seller or '（未读到酒店名）'}{qty} {money}"
+        name = inv.brand or inv.seller or "（未读到酒店名）"
+        text = f"住宿：{name}{qty} {money}"
+        if inv.share:
+            part, parts, orig = inv.share
+            text += (f"\n（整票 ¥{orig:,.2f} 含 {parts} 晚，按晚均分，"
+                     f"本晚第 {part}/{parts} 份）")
+        return text
     if inv.kind == "餐饮":
         return f"餐饮：{inv.seller or '（未读到餐厅名）'} {money}"
     return f"其他：{inv.seller or inv.subtype or '未识别'} {money}"
@@ -652,7 +1114,7 @@ def _write_date_sheet(wb: Workbook, invoices: list[Invoice]) -> None:
         auto = list(extra)
         weak = {i.kind for i in items if invoice_day(i)[1]}
         if "住宿" in weak:
-            auto.append("住宿票面无人住日期，此行按开票日期归入，请按实际入住日调整")
+            auto.append("住宿票面未读到入离日期，此行暂按开票日期归入，请按实际入住日调整")
         if "餐饮" in weak:
             auto.append("餐饮票面无消费日期，按开票日期归入")
         # 均分票必须在备注列点名：报销单审核时一眼能看出这一行的钱不是票面全额，
@@ -662,7 +1124,10 @@ def _write_date_sheet(wb: Workbook, invoices: list[Invoice]) -> None:
             bits = []
             for i in shared:
                 _, parts, orig = i.share        # 已过滤，必有值
-                bits.append(f"整票 ¥{orig:,.2f}÷{parts} 天，本日 ¥{(i.total or 0):,.2f}")
+                night = i.kind == "住宿"
+                unit = "晚" if night else "天"
+                bits.append(f"整票 ¥{orig:,.2f}÷{parts} {unit}，本"
+                            f"{'晚' if night else '日'} ¥{(i.total or 0):,.2f}")
             auto.append("均分票：" + "；".join(bits))
         notes = "；".join(x for x in [_clean_notes(items), *auto] if x)
         amount = {key: 0.0 for _, key in money_cols}
@@ -724,7 +1189,7 @@ def _write_date_sheet(wb: Workbook, invoices: list[Invoice]) -> None:
     split = [i for i in invoices if len(trip_days(i)) > 1 and i.total is not None]
     if split:
         ws.cell(row=row, column=ncol,
-                value=(f"含 {len(split)} 张跨天票，金额已按天均分到各日，"
+                value=(f"含 {len(split)} 张跨天票/多晚住宿，金额已按天（晚）均分到各日，"
                        f"各日金额之和 = 票面价税合计；张数按原始票据数计")).alignment = WRAP
 
     for i, w in enumerate([5, 11, 6, 12, 11, 56] + [10] * len(money_cols)
@@ -745,12 +1210,18 @@ def _describe(files: list, params: dict) -> str:
     buckets: dict[str, int] = {}
     for p in proj.values():
         buckets[p] = buckets.get(p, 0) + 1
-    lines = [f"即将解析 {len(files)} 张发票并生成汇总 Excel："]
+    lines = [f"即将解析 {len(files)} 个 PDF 并生成汇总 Excel（发票计入金额，"
+             f"行程单/结账单只用于补全信息）："]
+    lines.append("项目归属（按文件夹自动判定）：")
     for name, n in sorted(buckets.items()):
-        lines.append(f"  · {name}：{n} 张")
+        lines.append(f"  · {name}：{n} 个")
+    if any(p in ("未归属", "?") for p in buckets):
+        lines.append("⚠ 有文件没识别出项目名：如果这些票属于同一个项目，请在左侧")
+        lines.append("   「项目名（可选）」里填一个名字后重新运行；或改用「添加项目文件夹」")
+        lines.append("   选整个项目文件夹，项目名会自动带上。")
     lines.append("「按日期」表把同一天的花费合并成一行（交通/餐饮/住宿 分列），")
-    lines.append("一张票含多天行程时（如网约车月结），金额按天数均分到各日。")
-    lines.append("并附发票明细、项目汇总、待确认。")
+    lines.append("一张票含多天行程或住多晚时，金额按天（晚）均分到各日。")
+    lines.append("并附发票明细、项目汇总、附件（行程单/结账单）与待确认。")
     lines.append("解析是只读操作，不会修改发票文件。")
     return "\n".join(lines)
 
@@ -768,17 +1239,23 @@ INVOICE_SUMMARY_OP = OpDef(
         "把一批发票 PDF 整理成 Excel：首张「按日期」表把同一天的花费合并成一行"
         "（交通/餐饮/住宿 分列 + 当日合计），出行票取出发地→到达地，"
         "住宿票取酒店名称，餐饮票取餐厅名称。\n"
-        "一张票含多天行程时（如网约车月结票），金额按天数均分到各日，"
-        "明细里注明整票金额与第几份，各日之和等于票面价税合计。\n"
+        "一张票含多天行程时（如网约车月结票），金额按天数均分到各日；"
+        "多晚住宿按晚均分。明细里注明整票金额与第几份，各日之和等于票面价税合计。\n"
+        "网约车行程单、酒店结账单会自动配对到对应发票，用来补全真实日期、"
+        "起终点和酒店品牌，并单独列一张「附件」表；它们不是发票，不计入票数。\n"
         "另附「发票明细」（一张票一行，可溯源）、「项目汇总」和「待确认」。\n"
-        "项目归属按文件夹结构判定（一个项目一个文件夹），无需给发票命名。\n"
+        "项目归属按文件夹结构判定：建议用「添加项目文件夹」选整个项目文件夹，\n"
+        "或直接拖入整个文件夹；若手上是一堆散装 PDF，请在参数里填「项目名（可选）」。\n"
+        "桌面/下载/测试/输出 这类目录名不会被当成项目名，会标「未归属」提醒你补填。\n"
         "只支持有文本层的电子发票 PDF；扫描件/照片不做 OCR，会列入「待确认」。\n"
         "全程只读，不修改发票文件。"
     ),
     params=(
         Param("project_name", "项目名（可选）", "entry", default="", width=20,
-              hint=("留空 = 按文件夹自动归属：同在一个目录时项目名取目录名，"
-                    "分布在多个子目录时取第 1 层子目录名。填写后所有票归这一个项目。")),
+              hint=("留空 = 按文件夹自动归属（一个项目一个文件夹，建议用"
+                    "「添加项目文件夹」或拖入整个文件夹）。\n"
+                    "如果只上传了一堆散装 PDF，路径里没有项目信息，"
+                    "请在这里填一个项目名；填写后所有票统一归这个项目。")),
         Param("project_level", "项目名取第几层文件夹", "choice", default="1",
               choices=(("1", "第 1 层子目录"), ("2", "第 2 层子目录")),
               visible_if=("project_name", ("",))),
@@ -786,6 +1263,9 @@ INVOICE_SUMMARY_OP = OpDef(
               hint="同一张发票被保存了两份时只计一次，重复的列入「待确认」。"),
         Param("check_amount", "金额自洽校验", "bool", default=True,
               hint="校验 金额+税额 ≈ 价税合计（误差 ≤ 0.02 元），不符的列入「待确认」。"),
+        Param("use_filename_date", "票面无日期时用文件名日期兜底", "bool", default=True,
+              hint="住宿/餐饮票面常常只印开票日期；打车票的日期在行程单里。"
+                   "两者都读不到时，认「交通-10-08-…」这类文件名里的月日，并在说明里标注来源。"),
         Param("split_by_project", "每个项目单独一张工作表", "bool", default=False,
               hint="默认所有票在一张「发票明细」表里（首列为项目，可筛选）。"
                    "勾选后另为每个项目生成独立工作表。"),
@@ -803,19 +1283,25 @@ def run_invoice_summary(ctx: OpContext, files: list[str], params: dict) -> None:
     dedupe = bool(params.get("dedupe", True))
     check_amount = bool(params.get("check_amount", True))
     split_by_project = bool(params.get("split_by_project"))
+    use_filename_date = bool(params.get("use_filename_date", True))
 
     projects = assign_projects(files, project_name, level)
     ctx.set_total(len(files))
     ctx.metric("模式", "发票整理（只读解析）")
 
     invoices: list[Invoice] = []
+    attachments: list[Attachment] = []
     pending: list[Unreadable | Invoice] = []
     seen_no: dict[str, Invoice] = {}
 
     for f in files:
         ctx.check()
-        result = parse_invoice(f, projects.get(f, "未归属"))
+        result = parse_document(f, projects.get(f, "未归属"))
         ctx.step(f"解析 {os.path.basename(f)}")
+        if isinstance(result, Attachment):
+            attachments.append(result)
+            ctx.skip(f, f"{result.kind}（发票附件，不单独计入）")
+            continue
         if isinstance(result, Unreadable):
             pending.append(result)
             ctx.fail(f, result.reason)
@@ -837,6 +1323,13 @@ def run_invoice_summary(ctx: OpContext, files: list[str], params: dict) -> None:
                 continue
         invoices.append(result)
         ctx.ok(src=f)
+
+    # 行程单/结账单补全日期与起终点；仍缺日期时才用文件名兜底
+    link_attachments(invoices, attachments)
+    for inv in invoices:
+        sync_use_date(inv)
+        if use_filename_date:
+            apply_filename_date(inv)
 
     # ------------------------------------------------------ 写 Excel
     wb = Workbook()
@@ -865,7 +1358,7 @@ def run_invoice_summary(ctx: OpContext, files: list[str], params: dict) -> None:
         ws.append([
             inv.project, inv.kind, inv.subtype,
             invoice_day(inv)[0] or inv.use_date or inv.invoice_date,
-            inv.route, (inv.seller if inv.kind in ("住宿", "餐饮") else ""),
+            inv.route, ((inv.brand or inv.seller) if inv.kind in ("住宿", "餐饮") else ""),
             inv.seller, inv.invoice_no,
             inv.amount, inv.tax, inv.total, inv.passenger,
             os.path.basename(inv.path), note,
@@ -902,7 +1395,7 @@ def run_invoice_summary(ctx: OpContext, files: list[str], params: dict) -> None:
                     inv.project, inv.kind, inv.subtype,
                     invoice_day(inv)[0] or inv.use_date or inv.invoice_date,
                     inv.route,
-                    (inv.seller if inv.kind in ("住宿", "餐饮") else ""),
+                    ((inv.brand or inv.seller) if inv.kind in ("住宿", "餐饮") else ""),
                     inv.seller, inv.invoice_no,
                     inv.amount, inv.tax, inv.total, inv.passenger,
                     os.path.basename(inv.path), "；".join(inv.notes),
@@ -939,7 +1432,30 @@ def run_invoice_summary(ctx: OpContext, files: list[str], params: dict) -> None:
     for i, w in enumerate((14, 9, 12, 9, 12, 9, 12, 12), 1):
         ws2.column_dimensions[get_column_letter(i)].width = w
 
-    # ---- Sheet 4：待确认
+    # ---- Sheet 4：附件（行程单/结账单）：不是发票，用来补全发票信息
+    if attachments:
+        wsA = wb.create_sheet("附件")
+        cols = ("文件名", "类型", "项目", "匹配到的发票", "金额", "日期", "说明")
+        wsA.append(list(cols))
+        for c in range(1, len(cols) + 1):
+            cell = wsA.cell(row=1, column=c)
+            cell.fill, cell.font = HEAD_FILL, HEAD_FONT
+        for att in attachments:
+            note = att.note or ("已匹配，用于补全日期/起终点" if att.kind == "行程单"
+                                else "已匹配，用于补全入住信息")
+            wsA.append([os.path.basename(att.path), att.kind, att.project,
+                        att.matched or "（未匹配）", att.total,
+                        "、".join(d[5:] for d in att.dates), note])
+        for i, w in enumerate((34, 10, 12, 34, 10, 22, 40), 1):
+            wsA.column_dimensions[get_column_letter(i)].width = w
+        for row in wsA.iter_rows(min_row=2):
+            for c in row:
+                c.alignment = WRAP
+        for row in wsA.iter_rows(min_row=2, min_col=5, max_col=5):
+            for c in row:
+                c.number_format = "#,##0.00"
+
+    # ---- Sheet 5：待确认
     if pending:
         ws3 = wb.create_sheet("待确认")
         ws3.append(list(PEND_COLS))
@@ -963,9 +1479,11 @@ def run_invoice_summary(ctx: OpContext, files: list[str], params: dict) -> None:
     wb.save(out)
     ctx.report.outputs.append(out)
     ctx.metric("有效票数", len(invoices))
+    ctx.metric("附件", len(attachments))
     ctx.metric("待确认", len(pending))
     ctx.ok(out)
-    ctx.log(f"已生成汇总：{out}（有效 {len(invoices)} 张，待确认 {len(pending)} 张）")
+    ctx.log(f"已生成汇总：{out}（有效 {len(invoices)} 张，附件 {len(attachments)} 份，"
+            f"待确认 {len(pending)} 张）")
 
 
 def _safe_sheet_title(title: str, used: set[str]) -> str:

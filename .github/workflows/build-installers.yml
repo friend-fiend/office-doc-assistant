@@ -32,7 +32,7 @@ env:
   # 版本号的权威来源是 build/office_doc_assistant.spec 里的 VERSION：
   # Windows 任务会在跑 ISCC 前自动读出来并写回这里，macOS 的 DMG 脚本也自己读 spec。
   # 下面这个值只是"读 spec 失败"时的兜底，正常情况下会被覆盖。
-  APP_VERSION: "1.0.4"
+  APP_VERSION: "1.0.5"
 
 jobs:
   build-windows:

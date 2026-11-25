@@ -19,10 +19,13 @@ from openpyxl import load_workbook  # noqa: E402
 from app.cancel import CancelToken  # noqa: E402
 from app.core import OPS  # noqa: E402
 from app.core.invoice_ops import (  # noqa: E402
+    Attachment,
     Invoice,
     Unreadable,
     assign_projects,
+    parse_document,
     parse_invoice,
+    trip_days,
 )
 from app.core.registry import OpContext  # noqa: E402
 from app.engine import TaskReport  # noqa: E402
@@ -105,6 +108,28 @@ HOTEL = [
     (130, [(30, "合    计"), (270, "¥438.68"), (370, "¥26.32")]),
     (150, [(30, "价税合计（大写）"), (140, "肆佰陆拾伍圆整"), (300, "（小写）"), (340, "¥ 465.00")]),
 ]
+# 多晚住宿：备注栏有入离日期（票面唯一的真实住店日期），用于验证按晚均分
+STAY = [
+    (30, [(40, "电子发票（增值税专用发票）"), (280, "发票号码： 26352000001641722000")]),
+    (50, [(280, "开票日期： 2026年07月10日")]),
+    (70, [(20, "买"), (35, "名称：厦门市博格管理咨询有限公司"),
+          (280, "售"), (295, "名称：宁德市东侨经济开发区安嘉酒店有限公司")]),
+    (90, [(20, "息"), (35, "统一社会信用代码/纳税人识别号：913502036123127852"),
+          (280, "息"), (295, "统一社会信用代码/纳税人识别号：91350901MA32XUTR18")]),
+    (110, [(30, "*生产生活服务*住宿费"), (200, "间"), (240, "2"),
+           (270, "141.51"), (330, "6%"), (370, "16.98")]),
+    (130, [(30, "合    计"), (270, "¥283.02"), (370, "¥16.98")]),
+    (150, [(30, "价税合计（大写）"), (140, "叁佰圆整"), (300, "（小写）"), (340, "¥ 300.00")]),
+    (170, [(30, "入离日期:7-8至7-10,共2天,共1间,订单姓名:林锦明")]),
+]
+# 酒店结账单：不是发票，用来补全酒店品牌
+FOLIO = [
+    (30, [(60, "测试酒店")]),
+    (55, [(60, "结账单")]),
+    (85, [(60, "客人姓名：林锦明")]),
+    (105, [(60, "入住日期：2026-07-08"), (300, "离店日期：2026-07-10")]),
+    (135, [(60, "消费合计"), (300, "300.00")]),
+]
 # 网约车月结票：一张票 3 天 3 段，价税合计 100.00（测试按天均分与末份补分位差）
 MONTHLY = [
     (30, [(60, "发票号码： 26327000001223907777"), (330, "电子发票（普通发票）")]),
@@ -174,6 +199,29 @@ def main() -> int:
         check("住宿票：酒店名取自销售方", r3.seller == "宁德市东侨经济开发区安嘉酒店有限公司", r3.seller)
         check("住宿票：价税合计", r3.total == 465.0, str(r3.total))
 
+        # ========== 3b. 多晚住宿：日期取备注的入离日期，按晚均分
+        p_stay = os.path.join(tmp, "住宿多晚样例.pdf")
+        _pdf(p_stay, STAY)
+        r3b = parse_invoice(p_stay, "测试项目")
+        assert isinstance(r3b, Invoice), "多晚住宿票解析失败"
+        check("多晚住宿：入住日取备注", r3b.use_date == "2026-07-08", r3b.use_date)
+        check("多晚住宿：晚数 = 2", r3b.stay_nights == 2, str(r3b.stay_nights))
+        check("多晚住宿：覆盖 7/8、7/9",
+              trip_days(r3b) == ["2026-07-08", "2026-07-09"], str(trip_days(r3b)))
+
+        # ========== 3c. 结账单不是发票，识别为附件
+        p_folio = os.path.join(tmp, "住宿-07-08-300.00-结账单.pdf")
+        _pdf(p_folio, FOLIO)
+        r3c = parse_document(p_folio, "测试项目")
+        check("结账单：归为附件而不是待确认",
+              isinstance(r3c, Attachment) and r3c.kind == "结账单",
+              type(r3c).__name__)
+        if isinstance(r3c, Attachment):
+            check("结账单：金额/入住日/酒店/客人",
+                  (r3c.total, r3c.stay_from, r3c.hotel, r3c.guest)
+                  == (300.0, "2026-07-08", "测试酒店", "林锦明"),
+                  f"{r3c.total}/{r3c.stay_from}/{r3c.hotel}/{r3c.guest}")
+
         # ========== 4. 无文本层 → 明确拒绝而不是猜
         p_blank = os.path.join(tmp, "扫描件样例.pdf")
         _pdf(p_blank, [])
@@ -194,6 +242,21 @@ def main() -> int:
         proj2 = assign_projects([f1, single])
         check("归属：全在同一目录→目录名", proj2[f1] == "projA", str(proj2))
         check("归属：显式项目名覆盖", assign_projects([f1, f2], "宁波项目")[f1] == "宁波项目", "")
+
+        # ========== 5b. 散装 PDF / 费用子目录不能污染项目字段
+        noise = os.path.join(tmp, "测试"); os.makedirs(noise, exist_ok=True)
+        f5 = os.path.join(noise, "x.pdf"); shutil.copy(p_taxi, f5)
+        r5 = assign_projects([f5])[f5]
+        check("归属：桌面/测试/输出类目录不冒充项目名", r5 == "未归属", r5)
+        fee = os.path.join(tmp, "洪盾 10 月报销(1)", "打的发票")
+        os.makedirs(fee, exist_ok=True)
+        f6 = os.path.join(fee, "y.pdf"); shutil.copy(p_taxi, f6)
+        r6 = assign_projects([f6])[f6]
+        check("归属：只选费用子目录时上溯到项目目录",
+              r6 == "洪盾 10 月报销(1)", r6)
+        warn = op.confirm_builder([f5], {"project_name": "", "project_level": "1"})
+        check("确认文案：未识别到项目时给出补填提示",
+              "未归属" in warn and "项目名（可选）" in warn, warn[:80])
 
         # ========== 6. 端到端：去重 + 汇总表
         f4 = os.path.join(sub1, "dup.pdf"); shutil.copy(p_taxi, f4)   # 与 f2 同号码
@@ -292,9 +355,42 @@ def main() -> int:
         check("跨天票：合计行备注说明分摊",
               "均分" in str(total_b[12] if len(total_b) > 12 else ""), str(total_b))
 
+        # ========== 7b. 附件配对：结账单补全酒店品牌，多晚住宿按晚均分
+        stay_dir = os.path.join(tmp, "住宿项目")
+        os.makedirs(stay_dir, exist_ok=True)
+        f_stay = os.path.join(stay_dir, "住宿-07-08-300.00-发票.pdf")
+        f_folio = os.path.join(stay_dir, "住宿-07-08-300.00-结账单.pdf")
+        shutil.copy(p_stay, f_stay)
+        shutil.copy(p_folio, f_folio)
+        ctx3 = make_ctx(os.path.join(tmp, "out3"))
+        ctx3.set_total(2)
+        run_invoice_summary(ctx3, [f_stay, f_folio], {
+            "project_name": "", "project_level": "1",
+            "dedupe": True, "check_amount": True, "split_by_project": False,
+        })
+        wb3 = load_workbook(ctx3.report.outputs[0])
+        check("附件：单独一张「附件」表", "附件" in wb3.sheetnames, str(wb3.sheetnames))
+        check("附件：不再占据待确认", "待确认" not in wb3.sheetnames, str(wb3.sheetnames))
+        rows_c = [[c.value for c in r] for r in wb3["按日期"].iter_rows(min_row=3)]
+        day_rows_c = [r for r in rows_c if hasattr(r[1], "year")]
+        check("多晚住宿：拆成 2 晚 2 行", len(day_rows_c) == 2,
+              str([str(r[1])[:10] for r in day_rows_c]))
+        check("多晚住宿：每晚 150", [round(r[8] or 0, 2) for r in day_rows_c] == [150.0, 150.0],
+              str([r[8] for r in day_rows_c]))
+        check("多晚住宿：合计 300、张数 1",
+              (round(rows_c[-1][9] or 0, 2), rows_c[-1][10]) == (300.0, 1),
+              f"{rows_c[-1][9]}/{rows_c[-1][10]}")
+        det = [[c.value for c in r] for r in wb3["发票明细"].iter_rows(min_row=2)]
+        check("结账单：酒店列显示品牌而非开票主体", det[0][5] == "测试酒店", str(det[0][5]))
+        check("结账单：销售方仍保留开票主体",
+              det[0][6] == "宁德市东侨经济开发区安嘉酒店有限公司", str(det[0][6]))
+        att_rows = [[c.value for c in r] for r in wb3["附件"].iter_rows(min_row=2)]
+        check("附件：结账单已配对到同名发票",
+              att_rows and att_rows[0][3] == "住宿-07-08-300.00-发票.pdf", str(att_rows[:1]))
+
         # ========== 8. 确认文案（不弹窗，直接调 builder）
         text = op.confirm_builder([f1, f2, f3], {"project_name": "", "project_level": "1"})
-        check("确认文案：列出项目与张数", "projA" in text and "1 张" in text, text[:60])
+        check("确认文案：列出项目与文件数", "projA" in text and "1 个" in text, text[:60])
 
         print()
         if failures:

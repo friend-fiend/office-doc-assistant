@@ -40,12 +40,15 @@ class FileList(ttk.Frame):
         # 按语义分级，而不是六个一模一样的白按钮：
         #   添加（主路径，蓝描边）｜ 排序（低权重文字）｜ 移除 / 清空（破坏性红字）
         # 一屏里同等重量的按钮越少，眼睛越容易找到下一步该点哪儿。
-        ttk.Button(bar, text="＋ 添加文件", style="Outline.TButton",
-                   command=self.add_files).pack(side="left", padx=(0, 6))
+        self.add_file_btn = ttk.Button(bar, text="＋ 添加文件", style="Outline.TButton",
+                                       command=self.add_files)
+        self.add_file_btn.pack(side="left", padx=(0, 6))
         # 「添加文件夹」保持白底细边（次操作），与纯文字按钮再差一档 ——
         # 它也是「添加」，不该和「上移/下移」看起来一样重。
-        ttk.Button(bar, text="添加文件夹",
-                   command=self.add_folder).pack(side="left", padx=(0, 10))
+        # 但发票整理要靠文件夹层级判定项目，选中该功能时会把它提为主按钮。
+        self.add_folder_btn = ttk.Button(bar, text="添加文件夹",
+                                         command=self.add_folder)
+        self.add_folder_btn.pack(side="left", padx=(0, 10))
 
         ttk.Separator(bar, orient="vertical").pack(side="left", fill="y",
                                                    padx=(0, 8), pady=5)
@@ -125,6 +128,20 @@ class FileList(ttk.Frame):
             allowed |= ext_set(g)
         self._allowed_ext = allowed
         self._allowed_label = label
+
+    def set_folder_primary(self, on: bool) -> None:
+        """切换到「按文件夹上传」为主路径（发票整理功能专用）。
+
+        只换语义色，不换按钮尺寸：主按钮用蓝描边，另一个降成文字按钮，
+        全屏仍然只有一个视觉重点。
+        """
+        if on:
+            self.add_folder_btn.configure(text="＋ 添加项目文件夹",
+                                          style="Outline.TButton")
+            self.add_file_btn.configure(style="Ghost.TButton")
+        else:
+            self.add_folder_btn.configure(text="添加文件夹", style="TButton")
+            self.add_file_btn.configure(style="Outline.TButton")
 
     # ================================================================ 添加 / 删除
     def add_files(self, paths: list[str] | None = None) -> None:

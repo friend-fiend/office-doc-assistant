@@ -581,6 +581,14 @@ class MainWindow:
         self.filelist.set_filter(op.accepts, op.accepts_label())
         self.param_panel.build(op)
 
+        # 发票整理的项目名来自文件夹层级：把「添加项目文件夹」提为主操作，
+        # 并在拖拽区写明原因，避免用户顺手全选一堆散 PDF 而丢掉项目信息。
+        is_invoice = op.key == "invoice_summary"
+        self.filelist.set_folder_primary(is_invoice)
+        self.drop_sub.configure(
+            text=("发票整理：建议拖入/添加整个项目文件夹，项目名会自动识别"
+                  if is_invoice else "支持多选 · 拖入整个文件夹会自动展开"))
+
         # 重命名功能特有的预览按钮
         self.extra_btn.pack_forget()
         if op.key == "batch_rename":
